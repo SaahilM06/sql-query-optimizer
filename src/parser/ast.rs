@@ -12,6 +12,8 @@ pub struct SelectStatement {
     pub from: TableRef,
     pub joins: Vec<Join>,
     pub where_clause: Option<Expression>,
+    pub group_by: Vec<Expression>,
+    pub having: Option<Expression>,
     pub order_by: Vec<OrderByItem>,
     pub limit: Option<usize>,
 }
@@ -22,6 +24,7 @@ pub struct SelectStatement {
 pub enum SelectItem {
     Expression(Expression, Option<String>), // expr + optional alias
     Wildcard,                               // *
+    QualifiedWildcard(String),              // table.*
 }
 
 // ── Table reference (FROM / JOIN target) ────────────────────────────────────
@@ -54,6 +57,7 @@ pub enum Expression {
         name: String,
         args: Vec<Expression>,
     },
+    Wildcard, // * in function args, e.g. COUNT(*)
 }
 
 // ── Literal values ──────────────────────────────────────────────────────────
