@@ -24,7 +24,6 @@ pub enum Token {
     Null,
     True,
     False,
-
     // Values
     Identifier(String),
     Integer(i64),
