@@ -15,10 +15,12 @@ pub struct AggregateExpr {
 
 #[derive(Debug, Clone)]
 pub enum LogicalPlan {
-    /// Read all rows from a table.
+    /// Read rows from a table.
+    /// `projected_columns` is set by projection pushdown — empty means all columns.
     Scan {
         table_name: String,
         alias: Option<String>,
+        projected_columns: Vec<String>,
     },
 
     /// Keep only rows where predicate is true.

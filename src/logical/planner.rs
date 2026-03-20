@@ -33,6 +33,7 @@ impl<'a> LogicalPlanner<'a> {
         let mut plan = LogicalPlan::Scan {
             table_name: stmt.from.table_name.clone(),
             alias: stmt.from.alias.clone(),
+            projected_columns: vec![],
         };
 
         // ── 3. Fold JOINs into a left-deep Join tree ─────────────────────────
@@ -45,6 +46,7 @@ impl<'a> LogicalPlanner<'a> {
             let right = LogicalPlan::Scan {
                 table_name: join.table.table_name.clone(),
                 alias: join.table.alias.clone(),
+                projected_columns: vec![],
             };
             plan = LogicalPlan::Join {
                 join_type: join.join_type,
