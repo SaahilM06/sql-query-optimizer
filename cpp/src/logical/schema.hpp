@@ -29,12 +29,23 @@ struct TableStats {
 struct TableSchema {
     std::vector<ColumnDef> columns;
     TableStats stats;
+    // Columns with a single-column index available. The physical planner
+    // consults this to decide whether an equality predicate can use an
+    // IndexScan instead of a SeqScan + Filter.
+    std::vector<std::string> indexed_columns;
 
     const ColumnDef* get_column(const std::string& name) const {
         for (const auto& c : columns) {
             if (c.name == name) return &c;
         }
         return nullptr;
+    }
+
+    bool has_index_on(const std::string& column) const {
+        for (const auto& c : indexed_columns) {
+            if (c == column) return true;
+        }
+        return false;
     }
 };
 

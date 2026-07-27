@@ -19,6 +19,8 @@ add_library(sql_optimizer_lib STATIC
   src/logical/schema.cpp
   src/logical/planner.cpp
   src/logical/optimizer.cpp
+  src/physical/cost.cpp
+  src/physical/physical_planner.cpp
 )
 
 target_include_directories(sql_optimizer_lib PUBLIC src)
@@ -36,6 +38,7 @@ add_executable(sql_optimizer_tests
   tests/main.cpp
   tests/parser_tests.cpp
   tests/optimizer_tests.cpp
+  tests/physical_tests.cpp
 )
 target_link_libraries(sql_optimizer_tests PRIVATE sql_optimizer_lib)
 target_include_directories(sql_optimizer_tests PRIVATE tests)

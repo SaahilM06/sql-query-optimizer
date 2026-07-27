@@ -13,6 +13,7 @@ Catalog Catalog::with_test_tables() {
             ColumnDef{"country", DataType::Text, true},
         },
         TableStats{10'000, 128},
+        {"id"}, // primary key
     });
 
     c.register_table("orders", TableSchema{
@@ -23,6 +24,7 @@ Catalog Catalog::with_test_tables() {
             ColumnDef{"status", DataType::Text, true},
         },
         TableStats{500'000, 64},
+        {"id", "customer_id"}, // primary key + FK index (common in practice)
     });
 
     c.register_table("products", TableSchema{
@@ -32,6 +34,7 @@ Catalog Catalog::with_test_tables() {
             ColumnDef{"price", DataType::Float, false},
         },
         TableStats{2'000, 96},
+        {"id"}, // primary key
     });
 
     return c;
