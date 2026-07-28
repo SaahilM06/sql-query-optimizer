@@ -7,12 +7,12 @@
 #include <cmath>
 #include <string>
 
-#include "../src/logical/logical_plan.hpp"
-#include "../src/optimizer/cardinality_estimator.hpp"
-#include "../src/optimizer/selectivity_estimator.hpp"
-#include "../src/parser/ast.hpp"
-#include "../src/statistics/statistics_catalog.hpp"
-#include "../src/statistics/statistics_loader.hpp"
+#include "../logical/logical_plan.hpp"
+#include "../optimizer/cardinality_estimator.hpp"
+#include "../optimizer/selectivity_estimator.hpp"
+#include "../parser/ast.hpp"
+#include "../statistics/statistics_catalog.hpp"
+#include "../statistics/statistics_loader.hpp"
 #include "test_framework.hpp"
 
 using namespace sql::parser;

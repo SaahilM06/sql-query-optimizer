@@ -10,13 +10,13 @@
 #include <iostream>
 #include <string>
 
-#include "../src/logical/logical_plan.hpp"
-#include "../src/logical/optimizer.hpp"
-#include "../src/logical/planner.hpp"
-#include "../src/logical/schema.hpp"
-#include "../src/parser/ast.hpp"
-#include "../src/parser/lexer.hpp"
-#include "../src/parser/parser.hpp"
+#include "../logical/logical_plan.hpp"
+#include "../logical/optimizer.hpp"
+#include "../logical/planner.hpp"
+#include "../logical/schema.hpp"
+#include "../parser/ast.hpp"
+#include "../parser/lexer.hpp"
+#include "../parser/parser.hpp"
 #include "test_framework.hpp"
 
 using namespace sql::parser;

@@ -292,7 +292,7 @@ Eviction under memory pressure, verified directly (not just unit-tested):
 Every `cmd/benchmark` run appends a JSON record to `benchmarks/results.jsonl`
 by default (`-output`, one JSON object per line so concurrent/repeated runs
 can't corrupt earlier entries). The table above is generated from real
-entries in that file, not hand-typed — `git log -p -- go/cache/benchmarks/results.jsonl`
+entries in that file, not hand-typed — `git log -p -- cache/benchmarks/results.jsonl`
 gives an actual history of measured performance over time, e.g. to check
 whether a change regressed throughput or latency. Tag a run with `-label`
 (a git commit, a scenario name) to make that history easier to slice later.

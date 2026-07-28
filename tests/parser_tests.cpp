@@ -6,9 +6,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "../src/parser/ast.hpp"
-#include "../src/parser/lexer.hpp"
-#include "../src/parser/parser.hpp"
+#include "../parser/ast.hpp"
+#include "../parser/lexer.hpp"
+#include "../parser/parser.hpp"
 #include "test_framework.hpp"
 
 using namespace sql::parser;

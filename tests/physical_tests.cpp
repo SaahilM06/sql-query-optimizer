@@ -6,16 +6,16 @@
 #include <cmath>
 #include <string>
 
-#include "../src/logical/optimizer.hpp"
-#include "../src/logical/planner.hpp"
-#include "../src/logical/schema.hpp"
-#include "../src/optimizer/cost_model.hpp"
-#include "../src/parser/ast.hpp"
-#include "../src/parser/lexer.hpp"
-#include "../src/parser/parser.hpp"
-#include "../src/physical/physical_plan.hpp"
-#include "../src/physical/physical_planner.hpp"
-#include "../src/statistics/statistics_loader.hpp"
+#include "../logical/optimizer.hpp"
+#include "../logical/planner.hpp"
+#include "../logical/schema.hpp"
+#include "../optimizer/cost_model.hpp"
+#include "../parser/ast.hpp"
+#include "../parser/lexer.hpp"
+#include "../parser/parser.hpp"
+#include "../physical/physical_plan.hpp"
+#include "../physical/physical_planner.hpp"
+#include "../statistics/statistics_loader.hpp"
 #include "test_framework.hpp"
 
 using namespace sql::parser;

@@ -14,32 +14,39 @@ add_compile_options(-Wall -Wextra)
 # ── Core library ─────────────────────────────────────────────────────────────
 
 add_library(sql_optimizer_lib STATIC
-  src/parser/lexer.cpp
-  src/parser/parser.cpp
-  src/logical/schema.cpp
-  src/logical/planner.cpp
-  src/logical/optimizer.cpp
-  src/physical/cost.cpp
-  src/physical/physical_planner.cpp
-  src/statistics/statistics_loader.cpp
-  src/optimizer/selectivity_estimator.cpp
-  src/optimizer/cardinality_estimator.cpp
-  src/optimizer/cost_model.cpp
-  src/optimizer/explain.cpp
-  src/optimizer/join_graph.cpp
-  src/optimizer/access_path_generator.cpp
-  src/optimizer/join_enumerator.cpp
+  parser/lexer.cpp
+  parser/parser.cpp
+  logical/schema.cpp
+  logical/planner.cpp
+  logical/optimizer.cpp
+  physical/cost.cpp
+  physical/physical_planner.cpp
+  statistics/statistics_loader.cpp
+  optimizer/selectivity_estimator.cpp
+  optimizer/cardinality_estimator.cpp
+  optimizer/cost_model.cpp
+  optimizer/explain.cpp
+  optimizer/join_graph.cpp
+  optimizer/access_path_generator.cpp
+  optimizer/join_enumerator.cpp
 )
 
 target_compile_definitions(sql_optimizer_lib PUBLIC
   SQL_OPTIMIZER_STATS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stats"
 )
 
-target_include_directories(sql_optimizer_lib PUBLIC src)
+# Repo root, so every component's own internal includes (e.g.
+# physical/physical_plan.hpp's `#include "../logical/logical_plan.hpp"`)
+# keep resolving via ordinary directory-relative lookup, while consumers
+# like cmd/demo/main.cpp can include root-relative ("logical/optimizer.hpp")
+# without needing a chain of "../../". PUBLIC here means both
+# sql_optimizer_demo and sql_optimizer_tests inherit it automatically
+# through their existing links below.
+target_include_directories(sql_optimizer_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ── Demo executable ───────────────────────────────────────────────────────────
 
-add_executable(sql_optimizer_demo src/main.cpp)
+add_executable(sql_optimizer_demo cmd/demo/main.cpp)
 target_link_libraries(sql_optimizer_demo PRIVATE sql_optimizer_lib)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
