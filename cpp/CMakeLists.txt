@@ -26,6 +26,9 @@ add_library(sql_optimizer_lib STATIC
   src/optimizer/cardinality_estimator.cpp
   src/optimizer/cost_model.cpp
   src/optimizer/explain.cpp
+  src/optimizer/join_graph.cpp
+  src/optimizer/access_path_generator.cpp
+  src/optimizer/join_enumerator.cpp
 )
 
 target_compile_definitions(sql_optimizer_lib PUBLIC
@@ -49,6 +52,7 @@ add_executable(sql_optimizer_tests
   tests/optimizer_tests.cpp
   tests/physical_tests.cpp
   tests/statistics_tests.cpp
+  tests/join_search_tests.cpp
 )
 target_link_libraries(sql_optimizer_tests PRIVATE sql_optimizer_lib)
 target_include_directories(sql_optimizer_tests PRIVATE tests)

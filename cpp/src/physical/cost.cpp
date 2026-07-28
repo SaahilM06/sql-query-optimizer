@@ -65,6 +65,18 @@ Cost hash_join(size_t left_rows, size_t right_rows) {
     return c;
 }
 
+// One index probe per outer row -- no cost added for the inner side's own
+// access path at all, since it's bypassed entirely in favor of the index
+// (unlike nested_loop_join, which fully re-scans the inner side per outer
+// row, or hash_join, which reads it once to build the hash table).
+Cost index_nested_loop_join(size_t outer_rows, size_t output_rows) {
+    Cost c;
+    c.io = static_cast<double>(outer_rows) * kRandomPageCost;
+    c.cpu = static_cast<double>(outer_rows) * (kCpuTupleCost + kIndexTupleCost) +
+            static_cast<double>(output_rows) * kCpuTupleCost;
+    return c;
+}
+
 // CPU is proportional to input rows scanned (every row is hashed into a
 // group); memory is proportional to the number of groups actually held in
 // the hash table, which is usually far smaller than the input.

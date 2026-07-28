@@ -4,6 +4,7 @@
   "columns": {
     "id": { "distinct_count": 500000, "null_fraction": 0.0, "min": 1, "max": 500000 },
     "customer_id": { "distinct_count": 9200, "null_fraction": 0.0, "min": 1, "max": 10000 },
+    "product_id": { "distinct_count": 2000, "null_fraction": 0.0, "min": 1, "max": 2000 },
     "total": {
       "distinct_count": 50000,
       "null_fraction": 0.0,

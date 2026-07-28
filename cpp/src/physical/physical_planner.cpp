@@ -4,6 +4,8 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "../optimizer/join_enumerator.hpp"
+#include "../optimizer/join_graph.hpp"
 #include "cost.hpp"
 
 namespace sql::physical {
@@ -139,7 +141,36 @@ PhysicalPlan PhysicalPlanner::choose_join_strategy(JoinType join_type, Expressio
                                     join_est.confidence);
 }
 
+// Extracts a join graph from a maximal all-INNER-join subtree (Part 3) and
+// hands it to JoinEnumerator, which searches join order and physical join
+// algorithm together. Any predicate the graph builder couldn't attribute
+// to exactly one or two relations (residual_filters) is applied as an
+// ordinary Filter wrapping the search's result, using the same default
+// heuristic every other unresolvable-scope filter in this planner falls
+// back to.
+PhysicalPlan PhysicalPlanner::plan_join_search(const LogicalPlan& node) {
+    sql::optimizer::JoinGraphExtraction extraction = sql::optimizer::build_join_graph(node);
+
+    sql::optimizer::JoinEnumerator enumerator(schema_catalog_, stats_catalog_, cardinality_);
+    PhysicalPlan best = enumerator.find_best_plan(extraction.graph);
+
+    for (auto& pred : extraction.residual_filters) {
+        size_t rows = std::max<size_t>(best.estimated_rows / 10, static_cast<size_t>(1));
+        cost::Cost c = best.estimated_cost + cost::filter(best.estimated_rows);
+        best = PhysicalPlan::make_filter(
+            pred, std::move(best), c, rows,
+            "residual predicate spanning more than two relations or an unresolvable column -- default 10% heuristic",
+            0.2);
+    }
+
+    return best;
+}
+
 PhysicalPlan PhysicalPlanner::plan_node(const LogicalPlan& node) {
+    if (sql::optimizer::is_join_search_candidate(node)) {
+        return plan_join_search(node);
+    }
+
     switch (node.kind) {
         case LogicalPlan::Kind::Scan:
             return plan_scan(node);

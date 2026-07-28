@@ -58,6 +58,7 @@ Cost index_scan(size_t matched_rows);
 Cost filter(size_t input_rows);
 Cost nested_loop_join(size_t left_rows, size_t right_rows);
 Cost hash_join(size_t left_rows, size_t right_rows);
+Cost index_nested_loop_join(size_t outer_rows, size_t output_rows);
 Cost hash_aggregate(size_t input_rows, size_t estimated_groups);
 Cost sort(size_t input_rows);
 Cost project(size_t input_rows);

@@ -20,11 +20,12 @@ Catalog Catalog::with_test_tables() {
         {
             ColumnDef{"id", DataType::Int, false},
             ColumnDef{"customer_id", DataType::Int, false},
+            ColumnDef{"product_id", DataType::Int, false},
             ColumnDef{"total", DataType::Float, false},
             ColumnDef{"status", DataType::Text, true},
         },
         TableStats{500'000, 64},
-        {"id", "customer_id"}, // primary key + FK index (common in practice)
+        {"id", "customer_id", "product_id"}, // primary key + FK indexes (common in practice)
     });
 
     c.register_table("products", TableSchema{
@@ -32,6 +33,7 @@ Catalog Catalog::with_test_tables() {
             ColumnDef{"id", DataType::Int, false},
             ColumnDef{"name", DataType::Text, false},
             ColumnDef{"price", DataType::Float, false},
+            ColumnDef{"category", DataType::Text, false},
         },
         TableStats{2'000, 96},
         {"id"}, // primary key

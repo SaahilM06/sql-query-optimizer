@@ -36,6 +36,12 @@ cost::Cost CostModel::estimate_cost(const PhysicalPlan& plan) const {
             return estimate_cost(*plan.left) + estimate_cost(*plan.right) +
                    cost::hash_join(plan.left->estimated_rows, plan.right->estimated_rows);
 
+        case PhysicalPlan::Kind::IndexNestedLoopJoin:
+            // Only the outer (left) side's cost is added -- the inner side
+            // is probed via index, bypassing its own access-path cost
+            // entirely (see cost::index_nested_loop_join).
+            return estimate_cost(*plan.left) + cost::index_nested_loop_join(plan.left->estimated_rows, plan.estimated_rows);
+
         case PhysicalPlan::Kind::HashAggregate:
             return estimate_cost(*plan.input) + cost::hash_aggregate(plan.input->estimated_rows, plan.estimated_rows);
 

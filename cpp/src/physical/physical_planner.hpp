@@ -26,12 +26,17 @@ using sql::statistics::StatisticsCatalog;
 //
 //   Scan:  SeqScan, or IndexScan when a Filter directly above the scan is an
 //          equality predicate on an indexed column and indexing wins on cost.
-//   Join:  NestedLoopJoin always; HashJoin too when the condition is an
-//          equi-join, keeping whichever is cheaper.
+//   Join:  a maximal all-INNER-join subtree (through any number of Filter
+//          wrappers) is handed to optimizer::JoinEnumerator, which searches
+//          join order and physical join algorithm together (see
+//          optimizer/join_enumerator.hpp -- Part 3). A single join step
+//          that isn't part of such a subtree (i.e. involves an outer join)
+//          falls back to the simpler pairwise NestedLoopJoin-vs-HashJoin
+//          choice this planner has always made.
 //
-// Every other node (Filter that didn't collapse into an IndexScan, Aggregate,
-// Project, Sort, Limit) has exactly one physical strategy in this version --
-// only scan/join strategy selection is modeled so far.
+// Every other node (Filter that didn't collapse into an IndexScan or get
+// absorbed into a join search, Aggregate, Project, Sort, Limit) has exactly
+// one physical strategy in this version.
 //
 // `schema_catalog` supplies index metadata (which columns can support an
 // IndexScan); `stats_catalog` supplies the row counts, distinct counts, and
@@ -54,6 +59,7 @@ private:
     std::optional<PhysicalPlan> try_index_scan(const LogicalPlan& filter_node, const LogicalPlan& scan_node);
     PhysicalPlan choose_join_strategy(JoinType join_type, Expression condition, PhysicalPlan left, PhysicalPlan right,
                                        const LogicalPlan& left_scope, const LogicalPlan& right_scope);
+    PhysicalPlan plan_join_search(const LogicalPlan& node);
 };
 
 /// Convenience one-shot entry point.

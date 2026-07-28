@@ -31,8 +31,11 @@ using sql::parser::OrderByItem;
 // optimizer::Estimate), so an annotated plan can be printed showing not
 // just a row count but where it came from.
 //
-// Move-only, same rationale as LogicalPlan: nothing here needs deep cloning,
-// only tree rebuilding by moving children out.
+// Deep-copyable (like Expression), not move-only like LogicalPlan: the
+// join-order DP search (see optimizer::JoinEnumerator) memoizes the best
+// plan for each relation subset and reuses it as a building block for many
+// candidate parent plans, only one of which ultimately wins -- that
+// requires copying a subplan without disturbing the memoized original.
 class PhysicalPlan {
 public:
     enum class Kind {
@@ -41,6 +44,7 @@ public:
         Filter,
         NestedLoopJoin,
         HashJoin,
+        IndexNestedLoopJoin,
         HashAggregate,
         Project,
         Sort,
@@ -86,10 +90,40 @@ public:
     size_t count = 0;
 
     PhysicalPlan() = default;
-    PhysicalPlan(const PhysicalPlan&) = delete;
-    PhysicalPlan& operator=(const PhysicalPlan&) = delete;
     PhysicalPlan(PhysicalPlan&&) noexcept = default;
     PhysicalPlan& operator=(PhysicalPlan&&) noexcept = default;
+
+    PhysicalPlan(const PhysicalPlan& other) { *this = other; }
+
+    PhysicalPlan& operator=(const PhysicalPlan& other) {
+        if (this == &other) return *this;
+        kind = other.kind;
+        estimated_cost = other.estimated_cost;
+        estimated_rows = other.estimated_rows;
+        cardinality_reasoning = other.cardinality_reasoning;
+        cardinality_confidence = other.cardinality_confidence;
+
+        table_name = other.table_name;
+        alias = other.alias;
+        projected_columns = other.projected_columns;
+        index_column = other.index_column;
+        index_probe_value = other.index_probe_value;
+
+        predicate = other.predicate;
+        input = other.input ? std::make_unique<PhysicalPlan>(*other.input) : nullptr;
+
+        join_type = other.join_type;
+        condition = other.condition;
+        left = other.left ? std::make_unique<PhysicalPlan>(*other.left) : nullptr;
+        right = other.right ? std::make_unique<PhysicalPlan>(*other.right) : nullptr;
+
+        group_by = other.group_by;
+        aggregates = other.aggregates;
+        expressions = other.expressions;
+        order_by = other.order_by;
+        count = other.count;
+        return *this;
+    }
 
     static PhysicalPlan make_seq_scan(std::string table_name, std::optional<std::string> alias,
                                        std::vector<std::string> projected_columns, cost::Cost cost, size_t rows,

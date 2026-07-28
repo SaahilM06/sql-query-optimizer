@@ -15,6 +15,7 @@ const char* kind_name(PhysicalPlan::Kind k) {
         case PhysicalPlan::Kind::Filter: return "Filter";
         case PhysicalPlan::Kind::NestedLoopJoin: return "NestedLoopJoin";
         case PhysicalPlan::Kind::HashJoin: return "HashJoin";
+        case PhysicalPlan::Kind::IndexNestedLoopJoin: return "IndexNestedLoopJoin";
         case PhysicalPlan::Kind::HashAggregate: return "HashAggregate";
         case PhysicalPlan::Kind::Project: return "Project";
         case PhysicalPlan::Kind::Sort: return "Sort";
@@ -55,6 +56,7 @@ void explain_plan(const PhysicalPlan& plan, std::ostream& os, int depth) {
             break;
         case PhysicalPlan::Kind::NestedLoopJoin:
         case PhysicalPlan::Kind::HashJoin:
+        case PhysicalPlan::Kind::IndexNestedLoopJoin:
             explain_plan(*plan.left, os, depth + 1);
             explain_plan(*plan.right, os, depth + 1);
             break;

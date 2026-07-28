@@ -200,5 +200,46 @@ int main() {
         std::cout << "Error: " << e.what() << "\n";
     }
 
+    // ── Part 3 demo: cost-based join order search ────────────────────────────
+    //
+    // The spec's own worked example: three tables joined in SQL as
+    // customers -> orders -> products, with a selective filter on each end
+    // (customers.country and products.category) but none on orders. The DP
+    // search should discover that starting with orders <-> products (the
+    // more selective pair once products is filtered) beats blindly
+    // following the SQL FROM/JOIN order.
+    std::cout << "\n──────────────────────────────────────────────────────────\n";
+    std::cout << "Cost-based join order search (Part 3)\n";
+    std::cout << "──────────────────────────────────────────────────────────\n";
+
+    const char* join_search_sql =
+        "SELECT c.name "
+        "FROM customers c "
+        "JOIN orders o ON c.id = o.customer_id "
+        "JOIN products p ON o.product_id = p.id "
+        "WHERE c.country = 'US' AND p.category = 'electronics'";
+    std::cout << "SQL: " << join_search_sql << "\n";
+    std::cout << "(SQL join order as written: customers -> orders -> products)\n\n";
+
+    try {
+        auto schema_catalog = sql::logical::Catalog::with_test_tables();
+        auto stats_catalog = sql::statistics::load_catalog_from_directory(SQL_OPTIMIZER_STATS_DIR);
+
+        Lexer lexer(join_search_sql);
+        Parser parser(lexer.tokenize());
+        Statement stmt = parser.parse();
+
+        sql::logical::LogicalPlanner logical_planner(schema_catalog);
+        auto logical_plan = logical_planner.plan(std::move(stmt.select));
+        auto optimized = sql::logical::optimize(std::move(logical_plan), schema_catalog);
+
+        auto physical_plan = sql::physical::generate_physical_plan(optimized, schema_catalog, stats_catalog);
+
+        std::cout << "Chosen physical plan:\n\n";
+        sql::optimizer::explain_plan(physical_plan, std::cout);
+    } catch (const std::exception& e) {
+        std::cout << "Error: " << e.what() << "\n";
+    }
+
     return 0;
 }

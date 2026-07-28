@@ -60,6 +60,12 @@ bool costs_monotonic(const PhysicalPlan& node) {
             return node.estimated_cost.total() >= node.left->estimated_cost.total() &&
                    node.estimated_cost.total() >= node.right->estimated_cost.total() && costs_monotonic(*node.left) &&
                    costs_monotonic(*node.right);
+        case PhysicalPlan::Kind::IndexNestedLoopJoin:
+            // Only the outer (left) side's cost is folded in -- the inner
+            // side is probed via index instead of scanned, so its own
+            // estimated_cost isn't part of this node's cumulative cost.
+            return node.estimated_cost.total() >= node.left->estimated_cost.total() && costs_monotonic(*node.left) &&
+                   costs_monotonic(*node.right);
         case PhysicalPlan::Kind::SeqScan:
         case PhysicalPlan::Kind::IndexScan:
             return true;
