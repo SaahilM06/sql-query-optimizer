@@ -1,0 +1,24 @@
+{
+  "row_count": 500000,
+  "page_count": 3907,
+  "columns": {
+    "id": { "distinct_count": 500000, "null_fraction": 0.0, "min": 1, "max": 500000 },
+    "customer_id": { "distinct_count": 9200, "null_fraction": 0.0, "min": 1, "max": 10000 },
+    "total": {
+      "distinct_count": 50000,
+      "null_fraction": 0.0,
+      "min": 0,
+      "max": 1000,
+      "histogram": {
+        "buckets": [
+          { "lower": 0,   "upper": 25,   "frequency": 0.40 },
+          { "lower": 25,  "upper": 50,   "frequency": 0.25 },
+          { "lower": 50,  "upper": 100,  "frequency": 0.20 },
+          { "lower": 100, "upper": 250,  "frequency": 0.10 },
+          { "lower": 250, "upper": 1000, "frequency": 0.05 }
+        ]
+      }
+    },
+    "status": { "distinct_count": 5, "null_fraction": 0.02 }
+  }
+}

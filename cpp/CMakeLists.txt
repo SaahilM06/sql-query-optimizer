@@ -21,6 +21,15 @@ add_library(sql_optimizer_lib STATIC
   src/logical/optimizer.cpp
   src/physical/cost.cpp
   src/physical/physical_planner.cpp
+  src/statistics/statistics_loader.cpp
+  src/optimizer/selectivity_estimator.cpp
+  src/optimizer/cardinality_estimator.cpp
+  src/optimizer/cost_model.cpp
+  src/optimizer/explain.cpp
+)
+
+target_compile_definitions(sql_optimizer_lib PUBLIC
+  SQL_OPTIMIZER_STATS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stats"
 )
 
 target_include_directories(sql_optimizer_lib PUBLIC src)
@@ -39,6 +48,7 @@ add_executable(sql_optimizer_tests
   tests/parser_tests.cpp
   tests/optimizer_tests.cpp
   tests/physical_tests.cpp
+  tests/statistics_tests.cpp
 )
 target_link_libraries(sql_optimizer_tests PRIVATE sql_optimizer_lib)
 target_include_directories(sql_optimizer_tests PRIVATE tests)

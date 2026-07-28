@@ -8,6 +8,7 @@
 
 #include "../logical/logical_plan.hpp"
 #include "../parser/ast.hpp"
+#include "cost.hpp"
 
 namespace sql::physical {
 
@@ -24,6 +25,11 @@ using sql::parser::OrderByItem;
 // cumulative estimated cost and row count for the subtree rooted at it (not
 // just its own local cost) -- that's what makes "pick the cheaper candidate"
 // a meaningful comparison at every level, not just the top.
+//
+// `cardinality_reasoning`/`cardinality_confidence` carry the
+// CardinalityEstimator's explanation for `estimated_rows` (see
+// optimizer::Estimate), so an annotated plan can be printed showing not
+// just a row count but where it came from.
 //
 // Move-only, same rationale as LogicalPlan: nothing here needs deep cloning,
 // only tree rebuilding by moving children out.
@@ -42,8 +48,10 @@ public:
     };
 
     Kind kind = Kind::SeqScan;
-    double estimated_cost = 0.0; // cumulative cost of this subtree
+    cost::Cost estimated_cost;   // cumulative cost of this subtree
     size_t estimated_rows = 0;   // cumulative output row estimate
+    std::string cardinality_reasoning;
+    double cardinality_confidence = 1.0;
 
     // SeqScan / IndexScan
     std::string table_name;
@@ -84,8 +92,8 @@ public:
     PhysicalPlan& operator=(PhysicalPlan&&) noexcept = default;
 
     static PhysicalPlan make_seq_scan(std::string table_name, std::optional<std::string> alias,
-                                       std::vector<std::string> projected_columns,
-                                       double cost, size_t rows) {
+                                       std::vector<std::string> projected_columns, cost::Cost cost, size_t rows,
+                                       std::string reasoning = "", double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = Kind::SeqScan;
         p.table_name = std::move(table_name);
@@ -93,13 +101,15 @@ public:
         p.projected_columns = std::move(projected_columns);
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 
     static PhysicalPlan make_index_scan(std::string table_name, std::optional<std::string> alias,
-                                         std::vector<std::string> projected_columns,
-                                         std::string index_column, Expression probe_value,
-                                         double cost, size_t rows) {
+                                         std::vector<std::string> projected_columns, std::string index_column,
+                                         Expression probe_value, cost::Cost cost, size_t rows,
+                                         std::string reasoning = "", double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = Kind::IndexScan;
         p.table_name = std::move(table_name);
@@ -109,21 +119,27 @@ public:
         p.index_probe_value = std::move(probe_value);
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 
-    static PhysicalPlan make_filter(Expression predicate, PhysicalPlan input, double cost, size_t rows) {
+    static PhysicalPlan make_filter(Expression predicate, PhysicalPlan input, cost::Cost cost, size_t rows,
+                                     std::string reasoning = "", double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = Kind::Filter;
         p.predicate = std::move(predicate);
         p.input = std::make_unique<PhysicalPlan>(std::move(input));
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 
-    static PhysicalPlan make_join(Kind kind, JoinType join_type, Expression condition,
-                                   PhysicalPlan left, PhysicalPlan right, double cost, size_t rows) {
+    static PhysicalPlan make_join(Kind kind, JoinType join_type, Expression condition, PhysicalPlan left,
+                                   PhysicalPlan right, cost::Cost cost, size_t rows, std::string reasoning = "",
+                                   double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = kind;
         p.join_type = join_type;
@@ -132,12 +148,14 @@ public:
         p.right = std::make_unique<PhysicalPlan>(std::move(right));
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 
-    static PhysicalPlan make_hash_aggregate(std::vector<Expression> group_by,
-                                             std::vector<AggregateExpr> aggregates,
-                                             PhysicalPlan input, double cost, size_t rows) {
+    static PhysicalPlan make_hash_aggregate(std::vector<Expression> group_by, std::vector<AggregateExpr> aggregates,
+                                             PhysicalPlan input, cost::Cost cost, size_t rows,
+                                             std::string reasoning = "", double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = Kind::HashAggregate;
         p.group_by = std::move(group_by);
@@ -145,38 +163,48 @@ public:
         p.input = std::make_unique<PhysicalPlan>(std::move(input));
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 
     static PhysicalPlan make_project(std::vector<std::pair<Expression, std::optional<std::string>>> expressions,
-                                      PhysicalPlan input, double cost, size_t rows) {
+                                      PhysicalPlan input, cost::Cost cost, size_t rows, std::string reasoning = "",
+                                      double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = Kind::Project;
         p.expressions = std::move(expressions);
         p.input = std::make_unique<PhysicalPlan>(std::move(input));
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 
-    static PhysicalPlan make_sort(std::vector<OrderByItem> order_by, PhysicalPlan input,
-                                   double cost, size_t rows) {
+    static PhysicalPlan make_sort(std::vector<OrderByItem> order_by, PhysicalPlan input, cost::Cost cost, size_t rows,
+                                   std::string reasoning = "", double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = Kind::Sort;
         p.order_by = std::move(order_by);
         p.input = std::make_unique<PhysicalPlan>(std::move(input));
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 
-    static PhysicalPlan make_limit(size_t count, PhysicalPlan input, double cost, size_t rows) {
+    static PhysicalPlan make_limit(size_t count, PhysicalPlan input, cost::Cost cost, size_t rows,
+                                    std::string reasoning = "", double confidence = 1.0) {
         PhysicalPlan p;
         p.kind = Kind::Limit;
         p.count = count;
         p.input = std::make_unique<PhysicalPlan>(std::move(input));
         p.estimated_cost = cost;
         p.estimated_rows = rows;
+        p.cardinality_reasoning = std::move(reasoning);
+        p.cardinality_confidence = confidence;
         return p;
     }
 };

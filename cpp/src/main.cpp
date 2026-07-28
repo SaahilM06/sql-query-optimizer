@@ -1,8 +1,14 @@
 #include <array>
 #include <iostream>
 
+#include "logical/optimizer.hpp"
+#include "logical/planner.hpp"
+#include "logical/schema.hpp"
+#include "optimizer/explain.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
+#include "physical/physical_planner.hpp"
+#include "statistics/statistics_loader.hpp"
 
 using namespace sql::parser;
 
@@ -155,6 +161,43 @@ int main() {
         } catch (const std::exception& e) {
             std::cout << "Error: " << e.what() << "\n\n";
         }
+    }
+
+    // ── Part 2 demo: cardinality/cost-annotated physical plan ────────────────
+    //
+    // Same worked example from the cardinality-estimation spec: an equi-join
+    // with a WHERE predicate on each side, showing where every row estimate
+    // came from.
+    std::cout << "──────────────────────────────────────────────────────────\n";
+    std::cout << "Annotated physical plan (Part 2: cardinality + cost)\n";
+    std::cout << "──────────────────────────────────────────────────────────\n";
+
+    const char* demo_sql =
+        "SELECT c.name "
+        "FROM customers c "
+        "JOIN orders o ON c.id = o.customer_id "
+        "WHERE c.country = 'US' AND o.total > 100";
+    std::cout << "SQL: " << demo_sql << "\n\n";
+
+    try {
+        auto schema_catalog = sql::logical::Catalog::with_test_tables();
+        auto stats_catalog = sql::statistics::load_catalog_from_directory(SQL_OPTIMIZER_STATS_DIR);
+
+        Lexer lexer(demo_sql);
+        Parser parser(lexer.tokenize());
+        Statement stmt = parser.parse();
+
+        sql::logical::LogicalPlanner logical_planner(schema_catalog);
+        auto logical_plan = logical_planner.plan(std::move(stmt.select));
+        auto optimized = sql::logical::optimize(std::move(logical_plan), schema_catalog);
+
+        auto physical_plan = sql::physical::generate_physical_plan(optimized, schema_catalog, stats_catalog);
+
+        std::cout << "Chosen top-level strategy: "
+                   << (physical_plan.kind == sql::physical::PhysicalPlan::Kind::Project ? "Project" : "other") << "\n\n";
+        sql::optimizer::explain_plan(physical_plan, std::cout);
+    } catch (const std::exception& e) {
+        std::cout << "Error: " << e.what() << "\n";
     }
 
     return 0;

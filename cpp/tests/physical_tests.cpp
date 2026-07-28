@@ -2,27 +2,37 @@
 // NestedLoopJoin vs HashJoin) driven by the cost model in
 // src/physical/cost.hpp.
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "../src/logical/optimizer.hpp"
 #include "../src/logical/planner.hpp"
 #include "../src/logical/schema.hpp"
+#include "../src/optimizer/cost_model.hpp"
 #include "../src/parser/ast.hpp"
 #include "../src/parser/lexer.hpp"
 #include "../src/parser/parser.hpp"
 #include "../src/physical/physical_plan.hpp"
 #include "../src/physical/physical_planner.hpp"
+#include "../src/statistics/statistics_loader.hpp"
 #include "test_framework.hpp"
 
 using namespace sql::parser;
 using namespace sql::logical;
 using namespace sql::physical;
+using namespace sql::statistics;
+using sql::optimizer::CostModel;
 
 namespace {
 
+StatisticsCatalog test_stats_catalog() {
+    return load_catalog_from_directory(SQL_OPTIMIZER_STATS_DIR);
+}
+
 // ── pipeline helper: SQL -> optimized LogicalPlan -> PhysicalPlan ────────────
 
-PhysicalPlan physical_plan_for(const std::string& sql, const Catalog& catalog) {
+PhysicalPlan physical_plan_for(const std::string& sql, const Catalog& catalog, const StatisticsCatalog& stats) {
     Lexer lexer(sql);
     std::vector<Token> tokens = lexer.tokenize();
     Parser parser(std::move(tokens));
@@ -32,7 +42,7 @@ PhysicalPlan physical_plan_for(const std::string& sql, const Catalog& catalog) {
     LogicalPlan logical = planner.plan(std::move(stmt.select));
     LogicalPlan optimized = optimize(std::move(logical), catalog);
 
-    return generate_physical_plan(optimized, catalog);
+    return generate_physical_plan(optimized, catalog, stats);
 }
 
 /// True if `node`'s cost is >= every descendant's cost -- cumulative cost
@@ -44,11 +54,12 @@ bool costs_monotonic(const PhysicalPlan& node) {
         case PhysicalPlan::Kind::Project:
         case PhysicalPlan::Kind::Sort:
         case PhysicalPlan::Kind::Limit:
-            return node.estimated_cost >= node.input->estimated_cost && costs_monotonic(*node.input);
+            return node.estimated_cost.total() >= node.input->estimated_cost.total() && costs_monotonic(*node.input);
         case PhysicalPlan::Kind::NestedLoopJoin:
         case PhysicalPlan::Kind::HashJoin:
-            return node.estimated_cost >= node.left->estimated_cost && node.estimated_cost >= node.right->estimated_cost &&
-                   costs_monotonic(*node.left) && costs_monotonic(*node.right);
+            return node.estimated_cost.total() >= node.left->estimated_cost.total() &&
+                   node.estimated_cost.total() >= node.right->estimated_cost.total() && costs_monotonic(*node.left) &&
+                   costs_monotonic(*node.right);
         case PhysicalPlan::Kind::SeqScan:
         case PhysicalPlan::Kind::IndexScan:
             return true;
@@ -79,7 +90,8 @@ const PhysicalPlan* skip_wrappers(const PhysicalPlan& node) {
 // SeqScan + Filter under the cost model.
 TEST(equality_on_indexed_column_picks_index_scan) {
     Catalog catalog = Catalog::with_test_tables();
-    PhysicalPlan plan = physical_plan_for("SELECT * FROM orders WHERE customer_id = 5", catalog);
+    StatisticsCatalog stats = test_stats_catalog();
+    PhysicalPlan plan = physical_plan_for("SELECT * FROM orders WHERE customer_id = 5", catalog, stats);
 
     ASSERT_EQ_MSG(plan.kind, PhysicalPlan::Kind::IndexScan, "expected root to be IndexScan");
     ASSERT_EQ(plan.table_name, std::string("orders"));
@@ -91,7 +103,8 @@ TEST(equality_on_indexed_column_picks_index_scan) {
 // to SeqScan + Filter -- there is no IndexScan candidate to even consider.
 TEST(equality_on_unindexed_column_falls_back_to_seq_scan_filter) {
     Catalog catalog = Catalog::with_test_tables();
-    PhysicalPlan plan = physical_plan_for("SELECT * FROM orders WHERE status = 'shipped'", catalog);
+    StatisticsCatalog stats = test_stats_catalog();
+    PhysicalPlan plan = physical_plan_for("SELECT * FROM orders WHERE status = 'shipped'", catalog, stats);
 
     ASSERT_EQ_MSG(plan.kind, PhysicalPlan::Kind::Filter, "expected root to be Filter (no index available)");
     ASSERT_EQ_MSG(plan.input->kind, PhysicalPlan::Kind::SeqScan, "expected Filter's child to be SeqScan");
@@ -101,7 +114,8 @@ TEST(equality_on_unindexed_column_falls_back_to_seq_scan_filter) {
 // equality-lookup IndexScan modeled here, even on an indexed column.
 TEST(range_predicate_on_indexed_column_falls_back_to_seq_scan_filter) {
     Catalog catalog = Catalog::with_test_tables();
-    PhysicalPlan plan = physical_plan_for("SELECT * FROM orders WHERE customer_id > 5", catalog);
+    StatisticsCatalog stats = test_stats_catalog();
+    PhysicalPlan plan = physical_plan_for("SELECT * FROM orders WHERE customer_id > 5", catalog, stats);
 
     ASSERT_EQ_MSG(plan.kind, PhysicalPlan::Kind::Filter, "range predicates aren't index-eligible in this model");
     ASSERT_EQ(plan.input->kind, PhysicalPlan::Kind::SeqScan);
@@ -114,8 +128,9 @@ TEST(range_predicate_on_indexed_column_falls_back_to_seq_scan_filter) {
 // HashJoin must win.
 TEST(large_equi_join_picks_hash_join) {
     Catalog catalog = Catalog::with_test_tables();
+    StatisticsCatalog stats = test_stats_catalog();
     PhysicalPlan plan = physical_plan_for(
-        "SELECT c.name, o.total FROM customers c JOIN orders o ON c.id = o.customer_id", catalog);
+        "SELECT c.name, o.total FROM customers c JOIN orders o ON c.id = o.customer_id", catalog, stats);
 
     const PhysicalPlan* join = skip_wrappers(plan);
     ASSERT_EQ_MSG(join->kind, PhysicalPlan::Kind::HashJoin, "large equi-join should prefer HashJoin");
@@ -125,8 +140,9 @@ TEST(large_equi_join_picks_hash_join) {
 // this model -- NestedLoopJoin is the only option, regardless of cost.
 TEST(non_equi_join_only_has_nested_loop_candidate) {
     Catalog catalog = Catalog::with_test_tables();
+    StatisticsCatalog stats = test_stats_catalog();
     PhysicalPlan plan =
-        physical_plan_for("SELECT * FROM orders o JOIN products p ON o.total > p.price", catalog);
+        physical_plan_for("SELECT * FROM orders o JOIN products p ON o.total > p.price", catalog, stats);
 
     const PhysicalPlan* join = skip_wrappers(plan);
     ASSERT_EQ_MSG(join->kind, PhysicalPlan::Kind::NestedLoopJoin, "non-equi join must use NestedLoopJoin");
@@ -136,19 +152,21 @@ TEST(non_equi_join_only_has_nested_loop_candidate) {
 
 TEST(aggregate_maps_to_hash_aggregate) {
     Catalog catalog = Catalog::with_test_tables();
+    StatisticsCatalog stats = test_stats_catalog();
     PhysicalPlan plan = physical_plan_for(
         "SELECT c.name, SUM(o.total) FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name",
-        catalog);
+        catalog, stats);
 
     ASSERT_EQ_MSG(plan.kind, PhysicalPlan::Kind::HashAggregate, "GROUP BY query should produce a HashAggregate root");
 }
 
 TEST(sort_and_limit_and_project_present_in_pipeline_query) {
     Catalog catalog = Catalog::with_test_tables();
+    StatisticsCatalog stats = test_stats_catalog();
     PhysicalPlan plan = physical_plan_for(
         "SELECT c.name FROM customers c JOIN orders o ON c.id = o.customer_id "
         "WHERE o.total > 200 ORDER BY c.name LIMIT 10",
-        catalog);
+        catalog, stats);
 
     ASSERT_EQ_MSG(plan.kind, PhysicalPlan::Kind::Project, "top node should be Project");
     ASSERT_EQ_MSG(plan.input->kind, PhysicalPlan::Kind::Limit, "Project's child should be Limit");
@@ -160,13 +178,33 @@ TEST(sort_and_limit_and_project_present_in_pipeline_query) {
 
 TEST(cumulative_cost_is_monotonic_across_the_tree) {
     Catalog catalog = Catalog::with_test_tables();
+    StatisticsCatalog stats = test_stats_catalog();
     PhysicalPlan plan = physical_plan_for(
         "SELECT c.name, o.total, p.name FROM customers c "
         "JOIN orders o ON c.id = o.customer_id "
         "JOIN products p ON o.id = p.id",
-        catalog);
+        catalog, stats);
 
     ASSERT_TRUE_MSG(costs_monotonic(plan), "a parent's cumulative cost must never be less than a child's");
-    ASSERT_TRUE(plan.estimated_cost > 0.0);
+    ASSERT_TRUE(plan.estimated_cost.total() > 0.0);
     ASSERT_TRUE(plan.estimated_rows > 0);
+}
+
+// CostModel recomputes cost from scratch using the same formulas
+// PhysicalPlanner applied incrementally while building the tree -- the two
+// should agree, or something has drifted between them.
+TEST(cost_model_agrees_with_incremental_planner_cost) {
+    Catalog catalog = Catalog::with_test_tables();
+    StatisticsCatalog stats = test_stats_catalog();
+    PhysicalPlan plan = physical_plan_for(
+        "SELECT c.name, o.total FROM customers c JOIN orders o ON c.id = o.customer_id WHERE o.total > 100", catalog,
+        stats);
+
+    CostModel cost_model;
+    double recomputed = cost_model.estimate_cost(plan).total();
+    double incremental = plan.estimated_cost.total();
+
+    double tolerance = std::max(1.0, incremental * 0.01); // allow tiny float drift
+    ASSERT_TRUE_MSG(std::abs(recomputed - incremental) <= tolerance,
+                     "CostModel's standalone recomputation should match PhysicalPlanner's incremental cost");
 }
