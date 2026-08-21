@@ -7,6 +7,26 @@
 
 namespace sql::util {
 
+JsonValue& JsonObject::operator[](const std::string& key) {
+    for (auto& [k, v] : entries_) {
+        if (k == key) return v;
+    }
+    entries_.emplace_back(key, JsonValue{});
+    return entries_.back().second;
+}
+
+const JsonValue* JsonObject::find(const std::string& key) const {
+    for (const auto& [k, v] : entries_) {
+        if (k == key) return &v;
+    }
+    return nullptr;
+}
+
+std::vector<JsonObject::Entry>::iterator JsonObject::begin() { return entries_.begin(); }
+std::vector<JsonObject::Entry>::iterator JsonObject::end() { return entries_.end(); }
+std::vector<JsonObject::Entry>::const_iterator JsonObject::begin() const { return entries_.begin(); }
+std::vector<JsonObject::Entry>::const_iterator JsonObject::end() const { return entries_.end(); }
+
 namespace {
 
 class JsonParser {

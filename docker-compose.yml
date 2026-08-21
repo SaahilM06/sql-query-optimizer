@@ -1,0 +1,69 @@
+# One-command cluster launch: `docker compose up --build`
+#
+# Brings up the plan cache, 3 distributed workers, and the visual plan
+# explorer (http://localhost:8080). The coordinator is a REPL, not a
+# long-running service, so it's under the "tools" profile -- run it with:
+#   docker compose run --rm coordinator
+#
+# Every service binds via SQLOPT_BIND_HOST=0.0.0.0 (see cmd/web/main.cpp,
+# cmd/worker/main.cpp) so it's reachable both from other containers on the
+# compose network (by service name) and, for the ones with `ports:`, from
+# the host. Default local-dev usage (running binaries directly, no Docker)
+# is unaffected -- that path still defaults to 127.0.0.1.
+services:
+  cache:
+    build: ./cache
+    command: ["-addr", ":6380", "-snapshot-path", ""]
+    ports:
+      - "6380:6380"
+
+  worker0:
+    build: .
+    command: ["./build/sql_optimizer_worker", "0", "3", "7001"]
+    environment:
+      SQLOPT_BIND_HOST: "0.0.0.0"
+    ports:
+      - "7001:7001"
+
+  worker1:
+    build: .
+    command: ["./build/sql_optimizer_worker", "1", "3", "7002"]
+    environment:
+      SQLOPT_BIND_HOST: "0.0.0.0"
+    ports:
+      - "7002:7002"
+
+  worker2:
+    build: .
+    command: ["./build/sql_optimizer_worker", "2", "3", "7003"]
+    environment:
+      SQLOPT_BIND_HOST: "0.0.0.0"
+    ports:
+      - "7003:7003"
+
+  web:
+    build: .
+    command: ["./build/sql_optimizer_web"]
+    environment:
+      SQLOPT_BIND_HOST: "0.0.0.0"
+      SQLOPT_WEB_PORT: "8080"
+      SQLOPT_CACHE_ADDR: "cache:6380"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - cache
+
+  coordinator:
+    build: .
+    command: ["./build/sql_optimizer_coordinator"]
+    environment:
+      SQLOPT_WORKERS: "worker0:7001,worker1:7002,worker2:7003"
+      SQLOPT_CACHE_ADDR: "cache:6380"
+    depends_on:
+      - worker0
+      - worker1
+      - worker2
+      - cache
+    profiles: ["tools"]
+    stdin_open: true
+    tty: true

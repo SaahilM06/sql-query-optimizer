@@ -1,10 +1,34 @@
 #pragma once
 
 #include <string>
-#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace sql::util {
+
+struct JsonValue;
+
+// An insertion-ordered string -> JsonValue map, backed by a vector of pairs
+// rather than std::unordered_map: unordered_map requires its mapped type to
+// be complete at the point the container is instantiated, which JsonValue
+// isn't while it's still defining itself below. vector (like list/
+// forward_list) is explicitly permitted to hold an incomplete type here --
+// the same relaxation JsonValue::array_val already relies on for itself.
+class JsonObject {
+public:
+    using Entry = std::pair<std::string, JsonValue>;
+
+    JsonValue& operator[](const std::string& key);
+    const JsonValue* find(const std::string& key) const;
+
+    std::vector<Entry>::iterator begin();
+    std::vector<Entry>::iterator end();
+    std::vector<Entry>::const_iterator begin() const;
+    std::vector<Entry>::const_iterator end() const;
+
+private:
+    std::vector<Entry> entries_;
+};
 
 // ── Minimal JSON value + parser + writer ────────────────────────────────────
 //
@@ -21,12 +45,11 @@ struct JsonValue {
     double num_val = 0.0;
     std::string str_val;
     std::vector<JsonValue> array_val;
-    std::unordered_map<std::string, JsonValue> object_val;
+    JsonObject object_val;
 
     const JsonValue* find(const std::string& key) const {
         if (kind != Kind::Object) return nullptr;
-        auto it = object_val.find(key);
-        return it == object_val.end() ? nullptr : &it->second;
+        return object_val.find(key);
     }
 
     double as_number(double default_val = 0.0) const {

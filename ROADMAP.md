@@ -147,13 +147,38 @@ Status legend: ✅ done · ⬅️ in progress/next · ⬜ not started
   live worker process — including a double failure, 1 of 3 workers left
   standing — producing results identical to the healthy-cluster baseline
   every time)
-- ⬅️ **Full benchmarking study** — TPC-H-inspired dataset, query categories,
-  naive vs. rule-based vs. cost-based vs. adaptive comparison, q-error
-  metrics, P99 experiments under changing network/skew/straggler
-  conditions (the `SQLOPT_SIMULATED_LATENCY_MS` knob from the adaptive
-  checkpoint and the fault-injection path above feed directly into this)
-- ⬜ Presentation polish — Dockerized one-command cluster launch, CLI/REPL
-  polish, top-level docs, a demo recording
+- ✅ Full benchmarking study (`cmd/benchmark/` — 6-query suite, real p50/p95/p99
+  latency, real cardinality q-error, cache cold-vs-warm, single-node-vs-
+  distributed, a real fixed-rule-vs-adaptive comparison via
+  `SQLOPT_FORCE_STRATEGY`, and a real network-condition experiment;
+  results committed in `benchmarks/results.jsonl`, not fabricated. No
+  "naive planner" mode — see the file's own top comment for why; that
+  comparison already exists as the
+  `join_order_differs_from_sql_syntax_order_when_cheaper` test. Skew and
+  a fully-automated straggler run are not built — `SQLOPT_WORKER_DELAY_MS`
+  exists for a manual straggler comparison but the harness doesn't
+  orchestrate restarting a worker with it set)
+- ✅ Presentation polish (`README.md` — pitch, architecture diagram, quick
+  start, real benchmark numbers, known limitations; `scripts/demo.sh` — a
+  scripted live walkthrough including a real `kill -9` fault-tolerance
+  demo; `Dockerfile` + `cache/Dockerfile` + `docker-compose.yml` — one-
+  command cluster launch (`docker compose up --build`, then
+  `docker compose run --rm coordinator`), verified live: built both
+  images, brought up cache + 3 workers + web, confirmed the web API
+  reaches the cache over the compose network, ran a real distributed join
+  and a real fault-tolerance test — `docker kill -s SIGKILL` on a worker
+  container, coordinator still returned the correct full result — from a
+  separate coordinator container talking to the workers by service name.
+  Along the way, fixed two real bugs Docker surfaced that local dev
+  never hit: `cmd/web`/`cmd/worker` hardcoded their HTTP server to bind
+  `127.0.0.1` only (unreachable from other containers or via port
+  mapping — now configurable via `SQLOPT_BIND_HOST`, default unchanged),
+  and `util::JsonValue` held itself via `unordered_map`, which requires
+  a complete value type and compiled only by accident under macOS's
+  libc++ — GCC/libstdc++ (the Docker image's toolchain) correctly
+  rejected it; fixed by switching to a small vector-backed ordered map
+  (`JsonObject`), the same incomplete-type-friendly pattern `array_val`
+  already used one line above it.
 
 ## Subsystem notes (condensed from the original design discussion)
 

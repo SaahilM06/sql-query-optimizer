@@ -34,6 +34,7 @@ int main() {
     int cache_port = colon == std::string::npos ? 6380 : std::stoi(cache_addr.substr(colon + 1));
 
     std::string host = "127.0.0.1";
+    if (const char* env = std::getenv("SQLOPT_BIND_HOST")) host = env;
     int port = 8080;
     if (const char* env = std::getenv("SQLOPT_WEB_PORT")) port = std::stoi(env);
 

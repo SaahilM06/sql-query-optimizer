@@ -35,10 +35,13 @@ int main(int argc, char** argv) {
         std::cout << "  " << name << ": " << (table != nullptr ? table->row_count() : 0) << " rows\n";
     }
 
-    sql::web::HttpServer server("127.0.0.1", port);
+    std::string host = "127.0.0.1";
+    if (const char* env = std::getenv("SQLOPT_BIND_HOST")) host = env;
+
+    sql::web::HttpServer server(host, port);
     sql::distributed::register_worker_routes(server, database);
 
-    std::cout << "Listening on http://127.0.0.1:" << port << "\n";
+    std::cout << "Listening on http://" << host << ":" << port << "\n";
     server.run();
     return 0;
 }
