@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -62,6 +63,18 @@ public:
     const TableSchema* get(const std::string& name) const {
         auto it = tables_.find(name);
         return it == tables_.end() ? nullptr : &it->second;
+    }
+
+    /// All registered table names, sorted -- so callers that need a
+    /// deterministic full-catalog traversal (e.g. hashing a schema
+    /// fingerprint for the plan cache) don't depend on unordered_map's
+    /// iteration order.
+    std::vector<std::string> table_names() const {
+        std::vector<std::string> names;
+        names.reserve(tables_.size());
+        for (const auto& [name, schema] : tables_) names.push_back(name);
+        std::sort(names.begin(), names.end());
+        return names;
     }
 
     /// Pre-populated catalog for development and testing.

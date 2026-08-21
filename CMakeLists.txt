@@ -14,8 +14,10 @@ add_compile_options(-Wall -Wextra)
 # ── Core library ─────────────────────────────────────────────────────────────
 
 add_library(sql_optimizer_lib STATIC
+  util/json.cpp
   parser/lexer.cpp
   parser/parser.cpp
+  parser/sql_printer.cpp
   logical/schema.cpp
   logical/planner.cpp
   logical/optimizer.cpp
@@ -29,6 +31,10 @@ add_library(sql_optimizer_lib STATIC
   optimizer/join_graph.cpp
   optimizer/access_path_generator.cpp
   optimizer/join_enumerator.cpp
+  integration/plan_serializer.cpp
+  integration/cache_key.cpp
+  integration/cache_client.cpp
+  integration/cached_planner.cpp
 )
 
 target_compile_definitions(sql_optimizer_lib PUBLIC
@@ -60,6 +66,7 @@ add_executable(sql_optimizer_tests
   tests/physical_tests.cpp
   tests/statistics_tests.cpp
   tests/join_search_tests.cpp
+  tests/integration_tests.cpp
 )
 target_link_libraries(sql_optimizer_tests PRIVATE sql_optimizer_lib)
 target_include_directories(sql_optimizer_tests PRIVATE tests)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "statistics_catalog.hpp"
@@ -30,5 +31,12 @@ TableStats load_table_stats_from_file(const std::string& path);
 // table "orders"). Throws std::runtime_error if the directory can't be
 // read or any file in it fails to parse.
 StatisticsCatalog load_catalog_from_directory(const std::string& dir_path);
+
+// Hashes the raw bytes of every "*.json" file directly inside dir_path
+// (sorted by filename, for determinism) into a single fingerprint. Used as
+// the plan cache's "stats version" -- when any stats fixture changes, this
+// value changes, so cached plans keyed on the old version simply age out via
+// TTL instead of needing an explicit invalidation pass.
+uint64_t fingerprint_stats_directory(const std::string& dir_path);
 
 } // namespace sql::statistics

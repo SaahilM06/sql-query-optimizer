@@ -1,137 +1,21 @@
 #include <array>
+#include <cstdlib>
 #include <iostream>
 
+#include "integration/cache_client.hpp"
+#include "integration/cache_key.hpp"
+#include "integration/cached_planner.hpp"
 #include "logical/optimizer.hpp"
 #include "logical/planner.hpp"
 #include "logical/schema.hpp"
 #include "optimizer/explain.hpp"
 #include "parser/lexer.hpp"
 #include "parser/parser.hpp"
+#include "parser/sql_printer.hpp"
 #include "physical/physical_planner.hpp"
 #include "statistics/statistics_loader.hpp"
 
 using namespace sql::parser;
-
-namespace {
-
-const char* binary_op_name(BinaryOperator op) {
-    switch (op) {
-        case BinaryOperator::Eq: return "=";
-        case BinaryOperator::Neq: return "<>";
-        case BinaryOperator::Lt: return "<";
-        case BinaryOperator::Gt: return ">";
-        case BinaryOperator::Lte: return "<=";
-        case BinaryOperator::Gte: return ">=";
-        case BinaryOperator::And: return "AND";
-        case BinaryOperator::Or: return "OR";
-        case BinaryOperator::Add: return "+";
-        case BinaryOperator::Sub: return "-";
-        case BinaryOperator::Mul: return "*";
-        case BinaryOperator::Div: return "/";
-    }
-    return "?";
-}
-
-void print_expr(const Expression& e, std::ostream& os) {
-    switch (e.kind) {
-        case Expression::Kind::Column:
-            if (e.table.has_value()) os << *e.table << ".";
-            os << e.column;
-            break;
-        case Expression::Kind::Literal:
-            switch (e.literal.kind) {
-                case Literal::Kind::Integer: os << e.literal.int_val; break;
-                case Literal::Kind::Float: os << e.literal.float_val; break;
-                case Literal::Kind::Str: os << "'" << e.literal.str_val << "'"; break;
-                case Literal::Kind::Boolean: os << (e.literal.bool_val ? "TRUE" : "FALSE"); break;
-                case Literal::Kind::Null: os << "NULL"; break;
-            }
-            break;
-        case Expression::Kind::BinaryOp:
-            os << "(";
-            print_expr(*e.left, os);
-            os << " " << binary_op_name(e.binary_op) << " ";
-            print_expr(*e.right, os);
-            os << ")";
-            break;
-        case Expression::Kind::UnaryOp:
-            os << (e.unary_op == UnaryOperator::Not ? "NOT " : "-");
-            print_expr(*e.operand, os);
-            break;
-        case Expression::Kind::Function:
-            os << e.func_name << "(";
-            for (size_t i = 0; i < e.args.size(); ++i) {
-                if (i > 0) os << ", ";
-                print_expr(e.args[i], os);
-            }
-            os << ")";
-            break;
-        case Expression::Kind::Wildcard:
-            os << "*";
-            break;
-    }
-}
-
-void print_statement(const Statement& stmt, std::ostream& os) {
-    const SelectStatement& s = stmt.select;
-    os << "SELECT ";
-    for (size_t i = 0; i < s.columns.size(); ++i) {
-        if (i > 0) os << ", ";
-        const SelectItem& item = s.columns[i];
-        switch (item.kind) {
-            case SelectItem::Kind::Wildcard: os << "*"; break;
-            case SelectItem::Kind::QualifiedWildcard: os << item.qualified_table << ".*"; break;
-            case SelectItem::Kind::Expression:
-                print_expr(*item.expr, os);
-                if (item.alias.has_value()) os << " AS " << *item.alias;
-                break;
-        }
-    }
-    os << " FROM " << s.from.table_name;
-    if (s.from.alias.has_value()) os << " " << *s.from.alias;
-
-    for (const auto& j : s.joins) {
-        switch (j.join_type) {
-            case JoinType::Inner: os << " INNER JOIN "; break;
-            case JoinType::Left: os << " LEFT JOIN "; break;
-            case JoinType::Right: os << " RIGHT JOIN "; break;
-            case JoinType::Cross: os << " CROSS JOIN "; break;
-        }
-        os << j.table.table_name;
-        if (j.table.alias.has_value()) os << " " << *j.table.alias;
-        os << " ON ";
-        print_expr(j.condition, os);
-    }
-
-    if (s.where_clause.has_value()) {
-        os << " WHERE ";
-        print_expr(*s.where_clause, os);
-    }
-    if (!s.group_by.empty()) {
-        os << " GROUP BY ";
-        for (size_t i = 0; i < s.group_by.size(); ++i) {
-            if (i > 0) os << ", ";
-            print_expr(s.group_by[i], os);
-        }
-    }
-    if (s.having.has_value()) {
-        os << " HAVING ";
-        print_expr(*s.having, os);
-    }
-    if (!s.order_by.empty()) {
-        os << " ORDER BY ";
-        for (size_t i = 0; i < s.order_by.size(); ++i) {
-            if (i > 0) os << ", ";
-            print_expr(s.order_by[i].expression, os);
-            os << (s.order_by[i].ascending ? " ASC" : " DESC");
-        }
-    }
-    if (s.limit.has_value()) {
-        os << " LIMIT " << *s.limit;
-    }
-}
-
-} // namespace
 
 int main() {
     const std::array<const char*, 4> queries = {
@@ -155,9 +39,7 @@ int main() {
             std::vector<Token> tokens = lexer.tokenize();
             Parser parser(std::move(tokens));
             Statement ast = parser.parse();
-            std::cout << "AST: ";
-            print_statement(ast, std::cout);
-            std::cout << "\n\n";
+            std::cout << "AST: " << to_canonical_sql(ast) << "\n\n";
         } catch (const std::exception& e) {
             std::cout << "Error: " << e.what() << "\n\n";
         }
@@ -237,6 +119,50 @@ int main() {
 
         std::cout << "Chosen physical plan:\n\n";
         sql::optimizer::explain_plan(physical_plan, std::cout);
+    } catch (const std::exception& e) {
+        std::cout << "Error: " << e.what() << "\n";
+    }
+
+    // ── Part 4 demo: cache-integrated planning ────────────────────────────────
+    //
+    // Runs the same join-search query above through plan_with_cache twice.
+    // With cache/cmd/server running (see cache/README.md), the first call
+    // computes the plan and stores it; the second finds it already cached
+    // and skips re-planning entirely. With no cache reachable, both calls
+    // just fall through to the normal pipeline -- proving the optimizer
+    // never depends on the cache being up.
+    std::cout << "\n──────────────────────────────────────────────────────────\n";
+    std::cout << "Cache-integrated planning (Part 4)\n";
+    std::cout << "──────────────────────────────────────────────────────────\n";
+
+    std::string cache_addr = "127.0.0.1:6380";
+    if (const char* env = std::getenv("SQLOPT_CACHE_ADDR")) cache_addr = env;
+    size_t colon = cache_addr.find(':');
+    std::string cache_host = colon == std::string::npos ? cache_addr : cache_addr.substr(0, colon);
+    int cache_port = colon == std::string::npos ? 6380 : std::stoi(cache_addr.substr(colon + 1));
+
+    sql::integration::CacheClient cache(cache_host, cache_port);
+    if (cache.connect()) {
+        std::cout << "Connected to cache at " << cache_addr << "\n\n";
+    } else {
+        std::cout << "Cache unavailable at " << cache_addr
+                   << " -- running standalone (expected if cache/cmd/server isn't running).\n\n";
+    }
+
+    try {
+        auto schema_catalog = sql::logical::Catalog::with_test_tables();
+        auto stats_catalog = sql::statistics::load_catalog_from_directory(SQL_OPTIMIZER_STATS_DIR);
+        auto versions = sql::integration::compute_versions(schema_catalog, SQL_OPTIMIZER_STATS_DIR);
+
+        std::cout << "SQL: " << join_search_sql << "\n\n";
+
+        for (int run = 1; run <= 2; ++run) {
+            auto result = sql::integration::plan_with_cache(join_search_sql, schema_catalog, stats_catalog, cache, versions);
+            std::cout << "Run " << run << ": "
+                       << (result.cache_hit ? "cache hit (skipped re-optimization)" : "cache miss (computed and stored)")
+                       << "\n";
+        }
+        std::cout << "\n";
     } catch (const std::exception& e) {
         std::cout << "Error: " << e.what() << "\n";
     }
