@@ -138,11 +138,20 @@ Status legend: ✅ done · ⬅️ in progress/next · ⬜ not started
   "epsilon-greedy first" — replaces the fixed broadcast-vs-shuffle rule;
   `SHOW BANDIT` in the coordinator. UCB/Thompson/LinUCB not built — this is
   deliberately the simplest version, not the strongest one)
-- ⬜ Fault injection/recovery — detect a dead worker mid-stage, retry its
-  partition elsewhere
-- ⬜ Full benchmarking study — TPC-H-inspired dataset, query categories, naive
-  vs. rule-based vs. cost-based vs. adaptive comparison, q-error metrics,
-  P99 experiments under changing network/skew/straggler conditions
+- ✅ Fault injection/recovery (`distributed/coordinator.cpp`'s
+  `call_worker_or_recover` — a dead worker's contribution is recomputed by
+  the coordinator itself, filtering its own already-loaded
+  `local_full_database` down to exactly that worker's partition via the
+  same `partition_of()` math every worker uses at startup, so the result is
+  provably identical, not a guess. Verified with real `kill -9` against a
+  live worker process — including a double failure, 1 of 3 workers left
+  standing — producing results identical to the healthy-cluster baseline
+  every time)
+- ⬅️ **Full benchmarking study** — TPC-H-inspired dataset, query categories,
+  naive vs. rule-based vs. cost-based vs. adaptive comparison, q-error
+  metrics, P99 experiments under changing network/skew/straggler
+  conditions (the `SQLOPT_SIMULATED_LATENCY_MS` knob from the adaptive
+  checkpoint and the fault-injection path above feed directly into this)
 - ⬜ Presentation polish — Dockerized one-command cluster launch, CLI/REPL
   polish, top-level docs, a demo recording
 
