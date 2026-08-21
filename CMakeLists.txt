@@ -35,10 +35,20 @@ add_library(sql_optimizer_lib STATIC
   integration/cache_key.cpp
   integration/cache_client.cpp
   integration/cached_planner.cpp
+  storage/csv_reader.cpp
+  storage/table.cpp
+  storage/database.cpp
+  execution/row_schema.cpp
+  execution/value_ops.cpp
+  execution/expr_eval.cpp
+  execution/operators.cpp
+  execution/executor_builder.cpp
+  execution/query_runner.cpp
 )
 
 target_compile_definitions(sql_optimizer_lib PUBLIC
   SQL_OPTIMIZER_STATS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stats"
+  SQL_OPTIMIZER_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
 )
 
 # Repo root, so every component's own internal includes (e.g.
