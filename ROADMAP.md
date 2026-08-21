@@ -76,15 +76,20 @@ Status legend: ✅ done · ⬅️ in progress/next · ⬜ not started
   `join_enumerator` — Selinger-style DP, join order + algorithm chosen together)
 - ✅ Go cache integration (`cache/` + `integration/` — RESP client, versioned
   cache keys, get-or-compute planning, verified live)
-- ⬅️ **EXPLAIN + optimizer CLI** — interactive REPL: `EXPLAIN <sql>`,
-  `SHOW STATS`, `SHOW CACHE`; `EXPLAIN ANALYZE`/`SHOW WORKERS` stubbed until
-  their subsystems exist
-- ⬜ Real single-node execution — pull-iterator model (`open`/`next`/`close`)
-  to start, CSV-backed table storage to start
-- ⬜ EXPLAIN ANALYZE — estimated vs. actual rows/time per operator, once
-  execution exists
-- ⬜ Real statistics generation — an `ANALYZE` command that scans loaded data
-  instead of relying only on hand-authored JSON fixtures
+- ✅ EXPLAIN + optimizer CLI (`cmd/cli/` — interactive REPL: bare SQL executes
+  and prints rows, `EXPLAIN <sql>`, `EXPLAIN ANALYZE <sql>`, `SHOW STATS`,
+  `SHOW CACHE`; `SHOW WORKERS` stubbed until a worker cluster exists)
+- ✅ Real single-node execution (`storage/` + `execution/` — pull-iterator
+  model, CSV-backed tables in `data/`, one executor per `PhysicalPlan::Kind`;
+  IndexScan/IndexNestedLoopJoin execute as their non-indexed equivalents for
+  now, correctness-equivalent but not yet accelerated by a real index)
+- ✅ EXPLAIN ANALYZE (`execution/query_runner.cpp` — walks the PhysicalPlan
+  and executor trees in lockstep, prints estimated vs. actual rows/time at
+  every node; cumulative per-node timing falls out of the executor's
+  open()/next() wrappers for free, no manual bookkeeping)
+- ⬅️ **Real statistics generation** — an `ANALYZE` command that scans the
+  data/ tables now that they exist, instead of relying only on hand-authored
+  JSON fixtures
 - ⬜ Metrics infrastructure — per-query planning/execution telemetry, a query ID,
   candidate-plan counts
 - ⬜ Visual plan explorer — HTTP API + web frontend rendering the plan tree,
