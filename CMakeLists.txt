@@ -11,6 +11,8 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+find_package(Threads REQUIRED)
+
 # ── Core library ─────────────────────────────────────────────────────────────
 
 add_library(sql_optimizer_lib STATIC
@@ -46,12 +48,18 @@ add_library(sql_optimizer_lib STATIC
   execution/query_runner.cpp
   statistics/analyzer.cpp
   metrics/query_metrics.cpp
+  web/http_server.cpp
+  web/plan_json.cpp
+  web/api_handlers.cpp
 )
+
+target_link_libraries(sql_optimizer_lib PUBLIC Threads::Threads)
 
 target_compile_definitions(sql_optimizer_lib PUBLIC
   SQL_OPTIMIZER_STATS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stats"
   SQL_OPTIMIZER_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
   SQL_OPTIMIZER_METRICS_LOG="${CMAKE_CURRENT_SOURCE_DIR}/metrics/query_log.jsonl"
+  SQL_OPTIMIZER_WEB_FRONTEND_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web/frontend"
 )
 
 # Repo root, so every component's own internal includes (e.g.
@@ -72,6 +80,11 @@ target_link_libraries(sql_optimizer_demo PRIVATE sql_optimizer_lib)
 
 add_executable(sql_optimizer_cli cmd/cli/main.cpp)
 target_link_libraries(sql_optimizer_cli PRIVATE sql_optimizer_lib)
+
+# ── Visual plan explorer (web) ──────────────────────────────────────────────
+
+add_executable(sql_optimizer_web cmd/web/main.cpp)
+target_link_libraries(sql_optimizer_web PRIVATE sql_optimizer_lib)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SQL Query Optimizer -- Plan Explorer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --border: #2a2f3a;
+    --text: #e6e9ef;
+    --muted: #8a91a3;
+    --accent: #5b9dff;
+    --good: #4caf7d;
+    --bad: #e0665a;
+    --mono: "SF Mono", Consolas, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    display: flex;
+    height: 100vh;
+  }
+  #sidebar {
+    width: 220px;
+    border-right: 1px solid var(--border);
+    padding: 12px;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  #sidebar h2 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .table-item { padding: 6px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 4px; }
+  .table-item:hover { background: var(--panel); }
+  .table-item .name { color: var(--accent); }
+  .table-item .count { color: var(--muted); float: right; }
+  #main { flex: 1; display: flex; flex-direction: column; padding: 16px; min-width: 0; }
+  h1 { font-size: 15px; margin: 0 0 12px; }
+  textarea {
+    width: 100%;
+    height: 90px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    resize: vertical;
+  }
+  #controls { display: flex; align-items: center; gap: 12px; margin: 8px 0 16px; }
+  button {
+    background: var(--accent);
+    color: #0b0d12;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-family: var(--mono);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #status { color: var(--muted); }
+  #status.hit { color: var(--good); }
+  #status.miss { color: var(--accent); }
+  #error { color: var(--bad); white-space: pre-wrap; margin-bottom: 12px; }
+  #result { flex: 1; min-width: 0; overflow: auto; }
+  .node {
+    border-left: 2px solid var(--border);
+    margin-left: 10px;
+    padding-left: 12px;
+    margin-top: 8px;
+    min-width: 0;
+  }
+  .node-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: inline-block;
+    width: 340px;
+    max-width: 100%;
+  }
+  .op { color: var(--accent); font-weight: 600; }
+  .table-tag { color: var(--muted); }
+  .stat-line { margin-top: 4px; color: var(--muted); }
+  .stat-line .val { color: var(--text); }
+  .stat-line .off { color: var(--bad); }
+  .reasoning { margin-top: 4px; color: var(--muted); font-size: 11px; font-style: italic; }
+</style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2>Tables</h2>
+    <div id="tables"></div>
+  </div>
+  <div id="main">
+    <h1>SQL Query Optimizer -- Plan Explorer</h1>
+    <textarea id="sql" spellcheck="false">SELECT c.name FROM customers c WHERE c.country = 'US'</textarea>
+    <div id="controls">
+      <button id="run">Run</button>
+      <label><input type="checkbox" id="execute" checked> Execute (uncheck to plan only)</label>
+      <span id="status"></span>
+    </div>
+    <div id="error"></div>
+    <div id="result"></div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function loadSchema() {
+  const res = await fetch('/api/schema');
+  const data = await res.json();
+  const container = $('tables');
+  container.innerHTML = '';
+  for (const t of data.tables) {
+    const el = document.createElement('div');
+    el.className = 'table-item';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'name';
+    nameEl.textContent = t.name;
+    const countEl = document.createElement('span');
+    countEl.className = 'count';
+    countEl.textContent = Math.round(t.row_count);
+    el.appendChild(nameEl);
+    el.appendChild(countEl);
+    el.title = t.columns.join(', ');
+    el.addEventListener('click', () => {
+      $('sql').value = `SELECT * FROM ${t.name}`;
+    });
+    container.appendChild(el);
+  }
+}
+
+function fmt(n) {
+  if (n === undefined || n === null) return '-';
+  return Number.isInteger(n) ? n.toString() : n.toFixed(3);
+}
+
+function renderNode(node) {
+  const wrap = document.createElement('div');
+  wrap.className = 'node';
+
+  const box = document.createElement('div');
+  box.className = 'node-box';
+
+  const title = document.createElement('div');
+  const opEl = document.createElement('span');
+  opEl.className = 'op';
+  opEl.textContent = node.operator;
+  title.appendChild(opEl);
+  if (node.table) {
+    const tag = document.createElement('span');
+    tag.className = 'table-tag';
+    tag.textContent = `(${node.table})`;
+    title.appendChild(document.createTextNode(' '));
+    title.appendChild(tag);
+  }
+  box.appendChild(title);
+
+  const rowsLine = document.createElement('div');
+  rowsLine.className = 'stat-line';
+  let rowsText = `rows: estimated `;
+  rowsLine.appendChild(document.createTextNode(rowsText));
+  const estSpan = document.createElement('span');
+  estSpan.className = 'val';
+  estSpan.textContent = fmt(node.estimated_rows);
+  rowsLine.appendChild(estSpan);
+  if (node.actual_rows !== undefined) {
+    rowsLine.appendChild(document.createTextNode('  actual '));
+    const actSpan = document.createElement('span');
+    const ratio = node.estimated_rows > 0 ? node.actual_rows / node.estimated_rows : (node.actual_rows > 0 ? Infinity : 1);
+    actSpan.className = (ratio > 3 || ratio < 0.33) ? 'off' : 'val';
+    actSpan.textContent = fmt(node.actual_rows);
+    rowsLine.appendChild(actSpan);
+  }
+  box.appendChild(rowsLine);
+
+  const costLine = document.createElement('div');
+  costLine.className = 'stat-line';
+  costLine.appendChild(document.createTextNode('cost: estimated '));
+  const costSpan = document.createElement('span');
+  costSpan.className = 'val';
+  costSpan.textContent = fmt(node.estimated_cost);
+  costLine.appendChild(costSpan);
+  if (node.actual_time_ms !== undefined) {
+    costLine.appendChild(document.createTextNode('  actual '));
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'val';
+    timeSpan.textContent = fmt(node.actual_time_ms) + ' ms';
+    costLine.appendChild(timeSpan);
+  }
+  box.appendChild(costLine);
+
+  if (node.reasoning) {
+    const reasoning = document.createElement('div');
+    reasoning.className = 'reasoning';
+    reasoning.textContent = node.reasoning;
+    box.appendChild(reasoning);
+  }
+
+  wrap.appendChild(box);
+
+  for (const child of (node.children || [])) {
+    wrap.appendChild(renderNode(child));
+  }
+
+  return wrap;
+}
+
+async function runQuery() {
+  const sql = $('sql').value.trim();
+  if (!sql) return;
+
+  const runBtn = $('run');
+  runBtn.disabled = true;
+  $('error').textContent = '';
+  $('status').textContent = 'running...';
+  $('status').className = '';
+
+  try {
+    const res = await fetch('/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, execute: $('execute').checked }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      $('error').textContent = data.error || `HTTP ${res.status}`;
+      $('status').textContent = '';
+      return;
+    }
+
+    const t = data.timing;
+    let statusText = `[Query #${data.query_id}] cache ${data.cache_hit ? 'HIT' : 'MISS'}` +
+      (data.cache_connected ? '' : ' (cache unavailable)') +
+      ` -- parse ${fmt(t.parse_ms)}ms, plan ${fmt(t.plan_ms)}ms`;
+    if (data.row_count !== undefined) statusText += `, execution ${fmt(t.execution_ms)}ms, ${data.row_count} rows`;
+    $('status').textContent = statusText;
+    $('status').className = data.cache_hit ? 'hit' : 'miss';
+
+    const result = $('result');
+    result.innerHTML = '';
+    result.appendChild(renderNode(data.plan));
+  } catch (e) {
+    $('error').textContent = String(e);
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+$('run').addEventListener('click', runQuery);
+$('sql').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runQuery();
+});
+
+loadSchema();
+</script>
+</body>
+</html>
