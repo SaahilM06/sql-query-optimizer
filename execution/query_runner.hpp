@@ -20,7 +20,10 @@ ExecutionResult run_to_completion(Executor& root);
 // tree: each PhysicalPlan node's existing estimated_rows/estimated_cost
 // next to the matching Executor node's actual rows_produced()/elapsed_ms().
 // `plan` and `executor` must be the same tree shape -- i.e. `executor` came
-// from build_executor(plan, ...) (see executor_builder.hpp).
-void explain_analyze(const sql::physical::PhysicalPlan& plan, Executor& executor, std::ostream& os);
+// from build_executor(plan, ...) (see executor_builder.hpp). Returns the
+// same ExecutionResult run_to_completion would, so callers that also want
+// to log/report the overall row count and timing (not just print the tree)
+// don't have to execute twice.
+ExecutionResult explain_analyze(const sql::physical::PhysicalPlan& plan, Executor& executor, std::ostream& os);
 
 } // namespace sql::execution

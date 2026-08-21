@@ -43,11 +43,12 @@ void print_node(const sql::physical::PhysicalPlan& plan, Executor& executor, std
 
 } // namespace
 
-void explain_analyze(const sql::physical::PhysicalPlan& plan, Executor& executor, std::ostream& os) {
+ExecutionResult explain_analyze(const sql::physical::PhysicalPlan& plan, Executor& executor, std::ostream& os) {
     ExecutionResult result = run_to_completion(executor);
     os << "Executed: " << result.rows.size() << " rows in " << std::fixed << std::setprecision(3)
        << result.total_elapsed_ms << " ms" << std::defaultfloat << "\n\n";
     print_node(plan, executor, os, 0);
+    return result;
 }
 
 } // namespace sql::execution

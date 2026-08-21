@@ -13,6 +13,14 @@ namespace sql::integration {
 struct CachedPlanResult {
     sql::physical::PhysicalPlan plan;
     bool cache_hit = false;
+
+    // Per-phase timing, for callers that want to report/log it (see
+    // metrics::QueryMetrics). plan_ms and cache_store_ms are 0.0 on a cache
+    // hit -- nothing was (re)planned or (re)stored.
+    double parse_ms = 0.0;
+    double cache_lookup_ms = 0.0;
+    double plan_ms = 0.0;
+    double cache_store_ms = 0.0;
 };
 
 // Parses `sql`, builds its versioned cache key, and checks `cache` before

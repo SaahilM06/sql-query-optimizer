@@ -44,11 +44,14 @@ add_library(sql_optimizer_lib STATIC
   execution/operators.cpp
   execution/executor_builder.cpp
   execution/query_runner.cpp
+  statistics/analyzer.cpp
+  metrics/query_metrics.cpp
 )
 
 target_compile_definitions(sql_optimizer_lib PUBLIC
   SQL_OPTIMIZER_STATS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stats"
   SQL_OPTIMIZER_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+  SQL_OPTIMIZER_METRICS_LOG="${CMAKE_CURRENT_SOURCE_DIR}/metrics/query_log.jsonl"
 )
 
 # Repo root, so every component's own internal includes (e.g.
