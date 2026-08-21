@@ -55,6 +55,11 @@ target_include_directories(sql_optimizer_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(sql_optimizer_demo cmd/demo/main.cpp)
 target_link_libraries(sql_optimizer_demo PRIVATE sql_optimizer_lib)
 
+# ── Interactive CLI ───────────────────────────────────────────────────────────
+
+add_executable(sql_optimizer_cli cmd/cli/main.cpp)
+target_link_libraries(sql_optimizer_cli PRIVATE sql_optimizer_lib)
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 enable_testing()

@@ -256,4 +256,6 @@ bool CacheClient::set(const std::string& key, const std::string& value, int ttl_
     return reply.has_value() && reply->type == Reply::Type::Ok;
 }
 
+std::optional<Reply> CacheClient::command(const std::vector<std::string>& args) { return send_command(args); }
+
 } // namespace sql::integration

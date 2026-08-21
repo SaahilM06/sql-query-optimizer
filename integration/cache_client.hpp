@@ -88,6 +88,12 @@ public:
     // (including no connection) -- never throws.
     bool set(const std::string& key, const std::string& value, int ttl_seconds = 0);
 
+    // Sends an arbitrary command (e.g. {"INFO"}, {"DBSIZE"}) and returns its
+    // reply, or std::nullopt on any failure including no connection. get()/
+    // set() are the common cases above this; this is the escape hatch for
+    // callers that need something else (e.g. a CLI's "SHOW CACHE").
+    std::optional<Reply> command(const std::vector<std::string>& args);
+
 private:
     std::string host_;
     int port_;
