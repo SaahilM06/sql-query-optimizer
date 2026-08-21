@@ -69,6 +69,7 @@ target_compile_definitions(sql_optimizer_lib PUBLIC
   SQL_OPTIMIZER_WEB_FRONTEND_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web/frontend"
   SQL_OPTIMIZER_CALIBRATION_LOG="${CMAKE_CURRENT_SOURCE_DIR}/adaptive/calibration.json"
   SQL_OPTIMIZER_BANDIT_LOG="${CMAKE_CURRENT_SOURCE_DIR}/adaptive/bandit.json"
+  SQL_OPTIMIZER_BENCHMARKS_LOG="${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/results.jsonl"
 )
 
 # Repo root, so every component's own internal includes (e.g.
@@ -102,6 +103,11 @@ target_link_libraries(sql_optimizer_worker PRIVATE sql_optimizer_lib)
 
 add_executable(sql_optimizer_coordinator cmd/coordinator/main.cpp)
 target_link_libraries(sql_optimizer_coordinator PRIVATE sql_optimizer_lib)
+
+# ── Benchmark suite ──────────────────────────────────────────────────────────
+
+add_executable(sql_optimizer_benchmark cmd/benchmark/main.cpp)
+target_link_libraries(sql_optimizer_benchmark PRIVATE sql_optimizer_lib)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 

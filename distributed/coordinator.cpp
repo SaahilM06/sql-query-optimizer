@@ -40,6 +40,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
@@ -74,6 +75,20 @@ namespace {
 // it might be. Below it, broadcast and shuffle are both legal and the
 // bandit picks between them.
 constexpr size_t kBroadcastEligible = 5000; // rows
+
+// For the benchmark suite's "fixed rule vs. adaptive" comparison (see
+// cmd/benchmark/main.cpp): when set to "broadcast" or "shuffle", bypasses
+// the bandit entirely and always uses that strategy -- a fixed-rule
+// baseline to compare the bandit's learned policy against. The bandit is
+// deliberately not trained on these forced runs (see run_distributed_query)
+// since a forced choice isn't a real bandit decision.
+std::optional<std::string> forced_strategy() {
+    const char* env = std::getenv("SQLOPT_FORCE_STRATEGY");
+    if (env == nullptr) return std::nullopt;
+    std::string s = env;
+    if (s == "broadcast" || s == "shuffle") return s;
+    return std::nullopt;
+}
 
 double ms_since(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -653,12 +668,14 @@ DistributedQueryResult run_distributed_query(const std::string& sql, const sql::
 
             if (can_broadcast_left || can_broadcast_right) {
                 bool prefer_broadcast_left = can_broadcast_left && (!can_broadcast_right || left_est <= right_est);
-                bandit_arm = bandit.choose(bandit_context, {"broadcast", "shuffle"});
+                auto forced = forced_strategy();
+                bandit_arm = forced.value_or(bandit.choose(bandit_context, {"broadcast", "shuffle"}));
                 if (bandit_arm == "broadcast") {
                     result = run_broadcast_join(workers, *u.core, prefer_broadcast_left, u, recovery);
                 } else {
                     result = run_shuffle_join(workers, *u.core, u, schema_catalog, recovery);
                 }
+                if (forced.has_value()) bandit_context.clear(); // forced choice -- not a real bandit decision, don't train on it
             } else {
                 bandit_arm = "shuffle"; // the only legal option here -- still recorded, just never competes against broadcast for this context
                 result = run_shuffle_join(workers, *u.core, u, schema_catalog, recovery);
