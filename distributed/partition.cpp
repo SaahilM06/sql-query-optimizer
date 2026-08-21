@@ -16,10 +16,7 @@ size_t partition_of(int64_t id, size_t num_workers) {
 
 namespace {
 
-sql::storage::Table load_and_filter(const std::string& path, const sql::logical::TableSchema& schema, size_t worker_id,
-                                     size_t num_workers) {
-    sql::storage::Table full = sql::storage::load_table_from_csv(path, schema);
-
+sql::storage::Table filter_table_to_partition(const sql::storage::Table& full, size_t worker_id, size_t num_workers) {
     const auto& column_names = full.column_names();
     size_t id_col = column_names.size();
     for (size_t i = 0; i < column_names.size(); ++i) {
@@ -49,7 +46,20 @@ sql::storage::Database load_worker_partition(const std::string& data_dir, const 
         if (!std::filesystem::exists(path)) continue;
         const auto* schema = schema_catalog.get(name);
         if (schema == nullptr) continue;
-        db.add_table(name, load_and_filter(path.string(), *schema, worker_id, num_workers));
+        sql::storage::Table full = sql::storage::load_table_from_csv(path.string(), *schema);
+        db.add_table(name, filter_table_to_partition(full, worker_id, num_workers));
+    }
+    return db;
+}
+
+sql::storage::Database filter_database_to_partition(const sql::storage::Database& full,
+                                                      const sql::logical::Catalog& schema_catalog, size_t worker_id,
+                                                      size_t num_workers) {
+    sql::storage::Database db;
+    for (const auto& name : schema_catalog.table_names()) {
+        const auto* table = full.get(name);
+        if (table == nullptr) continue;
+        db.add_table(name, filter_table_to_partition(*table, worker_id, num_workers));
     }
     return db;
 }

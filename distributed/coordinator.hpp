@@ -34,6 +34,15 @@ struct DistributedQueryResult {
     // partial aggregate was already the complete, final answer for every
     // group it produced.
     bool used_copartition_merge_skip = false;
+
+    // Indices (into the `workers` vector passed to run_distributed_query)
+    // of any worker that didn't respond during this query -- its
+    // contribution was recomputed by the coordinator itself instead (see
+    // coordinator.cpp's call_worker_or_recover). Empty means every worker
+    // that was contacted actually answered. The query still completes
+    // correctly either way; this is purely for visibility into whether
+    // recovery happened.
+    std::vector<size_t> recovered_workers;
 };
 
 // Plans `sql` (unchanged single-node planning -- join order/algorithm

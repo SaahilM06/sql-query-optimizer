@@ -53,6 +53,7 @@
 #include "../util/hash.hpp"
 #include "../util/json.hpp"
 #include "http_client.hpp"
+#include "partition.hpp"
 #include "properties.hpp"
 #include "row_json.hpp"
 
@@ -302,6 +303,14 @@ struct WorkerResponse {
     std::vector<Row> rows;
 };
 
+// A shorter timeout than http_post_json's 5s default: a dead worker
+// (process gone, port closed) fails a connect() near-instantly regardless
+// of this value, but a genuinely hung/unresponsive one shouldn't be able
+// to stall an otherwise-recoverable query for 5 full seconds when the
+// coordinator can just compute that worker's contribution itself. See
+// call_worker_or_recover.
+constexpr int kWorkerCallTimeoutMs = 1500;
+
 std::optional<WorkerResponse> call_worker_execute(const WorkerAddress& w, const PhysicalPlan& plan,
                                                    const std::unordered_map<size_t, std::vector<Row>>& external_rows) {
     JsonValue body = JsonValue::make_object();
@@ -317,7 +326,7 @@ std::optional<WorkerResponse> call_worker_execute(const WorkerAddress& w, const 
         body.object_val["external_rows"] = std::move(ext);
     }
 
-    auto resp = http_post_json(w.host, w.port, "/worker/execute", sql::util::to_json(body));
+    auto resp = http_post_json(w.host, w.port, "/worker/execute", sql::util::to_json(body), kWorkerCallTimeoutMs);
     if (!resp.has_value() || resp->status != 200) return std::nullopt;
 
     JsonValue parsed = sql::util::parse_json(resp->body);
@@ -326,6 +335,44 @@ std::optional<WorkerResponse> call_worker_execute(const WorkerAddress& w, const 
         for (const auto& c : cols->array_val) out.columns.push_back(c.as_string());
     }
     if (const auto* rows = parsed.find("rows")) out.rows = rows_from_json(*rows);
+    return out;
+}
+
+// State call_worker_or_recover needs to compute a dead worker's
+// contribution itself: the full (unpartitioned) dataset it can filter down
+// to exactly what that worker owned, and where to record that it had to.
+struct RecoveryContext {
+    const sql::storage::Database& local_full_database;
+    const sql::logical::Catalog& schema_catalog;
+    size_t num_workers;
+    std::vector<size_t> recovered_workers; // appended to as failovers happen
+};
+
+// Tries the real worker first; if it's unreachable, recomputes its
+// contribution locally instead of failing the query. Correct because
+// partition_of() is a pure function of (id, num_workers): filtering
+// local_full_database down to exactly what worker_index owns reproduces
+// precisely what that worker would have computed, run through the same
+// execution engine used everywhere else in this project. This never
+// returns nullopt/throws for "worker down" -- only for a genuine local
+// execution error (e.g. a malformed plan), which would have failed on the
+// worker too.
+WorkerResponse call_worker_or_recover(const WorkerAddress& w, size_t worker_index, const PhysicalPlan& plan,
+                                       const std::unordered_map<size_t, std::vector<Row>>& external_rows,
+                                       RecoveryContext& ctx) {
+    auto resp = call_worker_execute(w, plan, external_rows);
+    if (resp.has_value()) return std::move(*resp);
+
+    ctx.recovered_workers.push_back(worker_index);
+
+    sql::storage::Database worker_partition =
+        filter_database_to_partition(ctx.local_full_database, ctx.schema_catalog, worker_index, ctx.num_workers);
+    auto executor = sql::execution::build_executor(plan, worker_partition, external_rows);
+    auto result = sql::execution::run_to_completion(*executor);
+
+    WorkerResponse out;
+    out.rows = std::move(result.rows);
+    for (size_t i = 0; i < executor->schema().size(); ++i) out.columns.push_back(executor->schema().qualified_name(i));
     return out;
 }
 
@@ -389,7 +436,8 @@ DistributedQueryResult run_fallback(const PhysicalPlan& plan, const sql::storage
 
 // ── Distributed single-relation (aggregate-or-plain, no join) ──────────────
 
-DistributedQueryResult run_distributed_single(const std::vector<WorkerAddress>& workers, const UnwrapResult& u) {
+DistributedQueryResult run_distributed_single(const std::vector<WorkerAddress>& workers, const UnwrapResult& u,
+                                               RecoveryContext& recovery) {
     std::optional<AvgSplit> split;
     PhysicalPlan worker_plan = *u.core;
     if (u.aggregate) {
@@ -401,11 +449,10 @@ DistributedQueryResult run_distributed_single(const std::vector<WorkerAddress>& 
 
     std::vector<std::vector<Row>> per_worker_rows;
     std::vector<std::string> result_columns;
-    for (const auto& w : workers) {
-        auto resp = call_worker_execute(w, worker_plan, {});
-        if (!resp.has_value()) throw std::runtime_error("distributed: worker unreachable: " + w.host + ":" + std::to_string(w.port));
-        per_worker_rows.push_back(std::move(resp->rows));
-        result_columns = resp->columns;
+    for (size_t i = 0; i < workers.size(); ++i) {
+        auto resp = call_worker_or_recover(workers[i], i, worker_plan, {}, recovery);
+        per_worker_rows.push_back(std::move(resp.rows));
+        result_columns = resp.columns;
     }
 
     std::vector<Row> merged;
@@ -416,26 +463,24 @@ DistributedQueryResult run_distributed_single(const std::vector<WorkerAddress>& 
         for (auto& wr : per_worker_rows) merged.insert(merged.end(), wr.begin(), wr.end());
     }
 
-    return finish(u, result_columns, std::move(merged), workers.size());
+    auto result = finish(u, result_columns, std::move(merged), workers.size());
+    result.recovered_workers = recovery.recovered_workers;
+    return result;
 }
 
 // ── Distributed join: broadcast ─────────────────────────────────────────────
 
 DistributedQueryResult run_broadcast_join(const std::vector<WorkerAddress>& workers, const PhysicalPlan& join,
-                                           bool broadcast_left, const UnwrapResult& u) {
+                                           bool broadcast_left, const UnwrapResult& u, RecoveryContext& recovery) {
     const PhysicalPlan& small_side = broadcast_left ? *join.left : *join.right;
     const PhysicalPlan& large_side = broadcast_left ? *join.right : *join.left;
 
     std::vector<Row> broadcast_rows;
     std::vector<std::string> broadcast_columns;
-    for (const auto& w : workers) {
-        auto resp = call_worker_execute(w, small_side, {});
-        if (!resp.has_value()) {
-            throw std::runtime_error("distributed: worker unreachable during broadcast gather: " + w.host + ":" +
-                                      std::to_string(w.port));
-        }
-        broadcast_rows.insert(broadcast_rows.end(), resp->rows.begin(), resp->rows.end());
-        broadcast_columns = resp->columns;
+    for (size_t i = 0; i < workers.size(); ++i) {
+        auto resp = call_worker_or_recover(workers[i], i, small_side, {}, recovery);
+        broadcast_rows.insert(broadcast_rows.end(), resp.rows.begin(), resp.rows.end());
+        broadcast_columns = resp.columns;
     }
 
     PhysicalPlan ext = PhysicalPlan::make_external_rows("broadcast:" + small_side.table_name, broadcast_columns, 0,
@@ -455,11 +500,10 @@ DistributedQueryResult run_broadcast_join(const std::vector<WorkerAddress>& work
 
     std::vector<std::vector<Row>> per_worker_rows;
     std::vector<std::string> result_columns;
-    for (const auto& w : workers) {
-        auto resp = call_worker_execute(w, worker_join, {{0, broadcast_rows}});
-        if (!resp.has_value()) throw std::runtime_error("distributed: worker unreachable: " + w.host + ":" + std::to_string(w.port));
-        per_worker_rows.push_back(std::move(resp->rows));
-        result_columns = resp->columns;
+    for (size_t i = 0; i < workers.size(); ++i) {
+        auto resp = call_worker_or_recover(workers[i], i, worker_join, {{0, broadcast_rows}}, recovery);
+        per_worker_rows.push_back(std::move(resp.rows));
+        result_columns = resp.columns;
     }
 
     std::vector<Row> merged;
@@ -472,42 +516,40 @@ DistributedQueryResult run_broadcast_join(const std::vector<WorkerAddress>& work
 
     auto result = finish(u, result_columns, std::move(merged), workers.size());
     result.join_strategy = broadcast_left ? "broadcast_left" : "broadcast_right";
+    result.recovered_workers = recovery.recovered_workers;
     return result;
 }
 
 // ── Distributed join: shuffle ────────────────────────────────────────────────
 
 DistributedQueryResult run_shuffle_join(const std::vector<WorkerAddress>& workers, const PhysicalPlan& join,
-                                         const UnwrapResult& u, const sql::logical::Catalog& schema_catalog) {
+                                         const UnwrapResult& u, const sql::logical::Catalog& schema_catalog,
+                                         RecoveryContext& recovery) {
     JoinKeys keys = resolve_join_keys(join, schema_catalog);
 
     size_t n = workers.size();
     std::vector<std::vector<Row>> left_by_target(n), right_by_target(n);
     std::vector<std::string> left_columns, right_columns;
 
-    for (const auto& w : workers) {
-        auto left_resp = call_worker_execute(w, *join.left, {});
-        auto right_resp = call_worker_execute(w, *join.right, {});
-        if (!left_resp.has_value() || !right_resp.has_value()) {
-            throw std::runtime_error("distributed: worker unreachable during shuffle gather: " + w.host + ":" +
-                                      std::to_string(w.port));
-        }
-        left_columns = left_resp->columns;
-        right_columns = right_resp->columns;
+    RowSchema left_schema = schema_for_relation(*join.left, schema_catalog);
+    RowSchema right_schema = schema_for_relation(*join.right, schema_catalog);
+    auto left_key_idx = left_schema.resolve(keys.left_key.table, keys.left_key.column);
+    auto right_key_idx = right_schema.resolve(keys.right_key.table, keys.right_key.column);
+    if (!left_key_idx.has_value() || !right_key_idx.has_value()) {
+        throw std::runtime_error("distributed: could not resolve join key column for shuffle");
+    }
 
-        RowSchema left_schema = schema_for_relation(*join.left, schema_catalog);
-        RowSchema right_schema = schema_for_relation(*join.right, schema_catalog);
-        auto left_key_idx = left_schema.resolve(keys.left_key.table, keys.left_key.column);
-        auto right_key_idx = right_schema.resolve(keys.right_key.table, keys.right_key.column);
-        if (!left_key_idx.has_value() || !right_key_idx.has_value()) {
-            throw std::runtime_error("distributed: could not resolve join key column for shuffle");
-        }
+    for (size_t i = 0; i < n; ++i) {
+        auto left_resp = call_worker_or_recover(workers[i], i, *join.left, {}, recovery);
+        auto right_resp = call_worker_or_recover(workers[i], i, *join.right, {}, recovery);
+        left_columns = left_resp.columns;
+        right_columns = right_resp.columns;
 
-        for (auto& row : left_resp->rows) {
+        for (auto& row : left_resp.rows) {
             size_t target = hash_partition_of(row[*left_key_idx], n);
             left_by_target[target].push_back(std::move(row));
         }
-        for (auto& row : right_resp->rows) {
+        for (auto& row : right_resp.rows) {
             size_t target = hash_partition_of(row[*right_key_idx], n);
             right_by_target[target].push_back(std::move(row));
         }
@@ -551,13 +593,9 @@ DistributedQueryResult run_shuffle_join(const std::vector<WorkerAddress>& worker
     for (size_t i = 0; i < n; ++i) {
         std::unordered_map<size_t, std::vector<Row>> ext_rows = {{0, std::move(left_by_target[i])},
                                                                    {1, std::move(right_by_target[i])}};
-        auto resp = call_worker_execute(workers[i], worker_join, ext_rows);
-        if (!resp.has_value()) {
-            throw std::runtime_error("distributed: worker unreachable: " + workers[i].host + ":" +
-                                      std::to_string(workers[i].port));
-        }
-        per_worker_rows.push_back(std::move(resp->rows));
-        result_columns = resp->columns;
+        auto resp = call_worker_or_recover(workers[i], i, worker_join, ext_rows, recovery);
+        per_worker_rows.push_back(std::move(resp.rows));
+        result_columns = resp.columns;
     }
 
     std::vector<Row> merged;
@@ -574,6 +612,7 @@ DistributedQueryResult run_shuffle_join(const std::vector<WorkerAddress>& worker
     auto result = finish(u, result_columns, std::move(merged), n);
     result.join_strategy = "shuffle";
     result.used_copartition_merge_skip = group_by_co_located;
+    result.recovered_workers = recovery.recovered_workers;
     return result;
 }
 
@@ -592,6 +631,8 @@ DistributedQueryResult run_distributed_query(const std::string& sql, const sql::
 
     auto planned = sql::integration::plan_with_cache(sql, schema_catalog, stats_catalog, cache, versions);
     UnwrapResult u = unwrap(planned.plan);
+
+    RecoveryContext recovery{local_full_database, schema_catalog, workers.size(), {}};
 
     DistributedQueryResult result;
     std::string bandit_context; // set only when this query actually went through the join decision below
@@ -614,17 +655,17 @@ DistributedQueryResult run_distributed_query(const std::string& sql, const sql::
                 bool prefer_broadcast_left = can_broadcast_left && (!can_broadcast_right || left_est <= right_est);
                 bandit_arm = bandit.choose(bandit_context, {"broadcast", "shuffle"});
                 if (bandit_arm == "broadcast") {
-                    result = run_broadcast_join(workers, *u.core, prefer_broadcast_left, u);
+                    result = run_broadcast_join(workers, *u.core, prefer_broadcast_left, u, recovery);
                 } else {
-                    result = run_shuffle_join(workers, *u.core, u, schema_catalog);
+                    result = run_shuffle_join(workers, *u.core, u, schema_catalog, recovery);
                 }
             } else {
                 bandit_arm = "shuffle"; // the only legal option here -- still recorded, just never competes against broadcast for this context
-                result = run_shuffle_join(workers, *u.core, u, schema_catalog);
+                result = run_shuffle_join(workers, *u.core, u, schema_catalog, recovery);
             }
         }
     } else if (is_single_relation(*u.core)) {
-        result = run_distributed_single(workers, u);
+        result = run_distributed_single(workers, u, recovery);
         result.join_strategy = "single";
     } else {
         result = run_fallback(planned.plan, local_full_database,

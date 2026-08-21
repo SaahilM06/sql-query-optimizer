@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -128,6 +129,22 @@ int main(int argc, char** argv) {
                 if (!result.join_strategy.empty()) std::cout << ", strategy=" << result.join_strategy;
                 if (result.used_copartition_merge_skip) std::cout << ", co-partition merge skipped";
                 std::cout << ", " << result.workers_used << " worker(s), " << result.total_ms << " ms]\n";
+                if (!result.recovered_workers.empty()) {
+                    // recovered_workers has one entry per failed RPC call
+                    // (a query can call the same down worker more than
+                    // once) -- count occurrences per worker for a readable
+                    // summary rather than printing every raw entry.
+                    std::map<size_t, size_t> counts;
+                    for (size_t idx : result.recovered_workers) ++counts[idx];
+                    std::cout << "  ! unreachable, coordinator recomputed locally: ";
+                    bool first = true;
+                    for (const auto& [idx, count] : counts) {
+                        if (!first) std::cout << ", ";
+                        first = false;
+                        std::cout << "worker " << idx << " (" << count << " call" << (count == 1 ? "" : "s") << ")";
+                    }
+                    std::cout << "\n";
+                }
             } else {
                 std::cout << "[fallback to single-node -- " << result.fallback_reason << " (" << result.total_ms
                           << " ms)]\n";
