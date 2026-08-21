@@ -103,13 +103,29 @@ Status legend: ✅ done · ⬅️ in progress/next · ⬜ not started
   verified in a real browser). Not yet done: rejected-alternative-plans
   view (needs the join enumerator to expose candidates it didn't pick, not
   just the winner), live updates, dedicated frontend tooling
-- ⬅️ **Distributed coordinator/workers** — multiple worker processes, partitioned
-  tables (`hash(key) % N`)
-- ⬜ Exchange operators — Broadcast and Shuffle
-- ⬜ Broadcast/Shuffle/Local hash join variants, cost-compared by the optimizer
-- ⬜ Distributed aggregation — partial-aggregate → shuffle → final-aggregate
-- ⬜ Physical property tracking — partitioning/ordering, so the optimizer can
-  skip a shuffle when both sides are already co-partitioned
+- ✅ Distributed coordinator/workers (`distributed/`, `cmd/worker/`,
+  `cmd/coordinator/` — real separate OS processes over HTTP, not simulated;
+  workers statically partition every table by its own primary key,
+  `id % num_workers`)
+- ✅ Exchange operators — Broadcast and Shuffle (`distributed/coordinator.cpp`
+  — broadcast gathers a small join side from all workers and replicates it;
+  shuffle gathers both sides to the coordinator and rehashes by the *join
+  key*, real data movement that fixes up whatever the static partitioning
+  didn't already align)
+- ✅ Broadcast/Shuffle/Local hash join variants — broadcast vs. shuffle
+  chosen by a fixed row-count threshold (not yet integrated into the
+  cost-based DP search — see "physical property tracking" below); local
+  join at each worker reuses the existing HashJoinExec/NestedLoopJoinExec
+  unchanged via an ExternalRows-injected input
+- ✅ Distributed aggregation (partial per-worker aggregate → coordinator
+  merge; AVG split into SUM+COUNT before shipping to workers since
+  per-worker averages can't be correctly re-averaged)
+- ⬅️ **Physical property tracking** — partitioning/ordering, so the optimizer
+  can skip a shuffle when both sides are already co-partitioned, and so
+  distribution isn't limited to "outermost join, both sides a single
+  relation" the way this build's coordinator currently is (a 3+ table join
+  falls back to single-node execution today, logged with a clear reason —
+  see distributed/coordinator.cpp's top comment)
 - ⬜ Adaptive runtime model — online regression correcting cost-model
   coefficients from actual execution telemetry
 - ⬜ Bandit-based plan selection — contextual bandit (epsilon-greedy → UCB →
