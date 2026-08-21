@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 
+#include "adaptive/calibration.hpp"
 #include "execution/executor_builder.hpp"
 #include "execution/query_runner.hpp"
 #include "execution/value_ops.hpp"
@@ -53,6 +54,7 @@ void print_help() {
                  "  ANALYZE               regenerate statistics by scanning data/ instead of stats/*.json\n"
                  "  SHOW STATS            print loaded schema + statistics\n"
                  "  SHOW CACHE            print plan cache INFO\n"
+                 "  SHOW CALIBRATION      print the learned cost-unit -> ms correction per operator kind\n"
                  "  SHOW WORKERS          not applicable -- single-node only\n"
                  "  HELP                  this message\n"
                  "  EXIT / QUIT           leave the REPL\n"
@@ -100,6 +102,24 @@ void show_cache(sql::integration::CacheClient& cache) {
         return;
     }
     std::cout << reply->bulk_val << "\n";
+}
+
+void show_calibration(const sql::adaptive::CalibrationModel& calibration) {
+    const auto& fits = calibration.snapshot();
+    if (fits.empty()) {
+        std::cout << "No calibration data yet -- run EXPLAIN ANALYZE a few times first.\n";
+        return;
+    }
+    for (const auto& [kind, fit] : fits) {
+        std::cout << kind << ": " << fit.n << " sample(s)";
+        if (fit.n >= 3) {
+            std::cout << std::fixed << std::setprecision(4) << ", ms ~= " << fit.scale() << " * cost + " << fit.bias()
+                       << std::defaultfloat;
+        } else {
+            std::cout << " (need 3+ to fit a line -- using raw cost units for now)";
+        }
+        std::cout << "\n";
+    }
 }
 
 void print_and_log_metrics(const sql::metrics::QueryMetrics& m) {
@@ -180,12 +200,24 @@ void run_explain(uint64_t query_id, const std::string& sql, const sql::logical::
 
 void run_explain_analyze(uint64_t query_id, const std::string& sql, const sql::logical::Catalog& schema_catalog,
                           const sql::statistics::StatisticsCatalog& stats_catalog, sql::integration::CacheClient& cache,
-                          sql::integration::CacheVersions versions, const sql::storage::Database& database) {
+                          sql::integration::CacheVersions versions, const sql::storage::Database& database,
+                          sql::adaptive::CalibrationModel& calibration) {
     auto result = sql::integration::plan_with_cache(sql, schema_catalog, stats_catalog, cache, versions);
     std::cout << "Plan cache: " << (result.cache_hit ? "HIT" : "MISS") << "\n\n";
 
     auto executor = sql::execution::build_executor(result.plan, database);
     auto exec_result = sql::execution::explain_analyze(result.plan, *executor, std::cout);
+
+    // Feed this run's estimated-vs-actual into the calibration model --
+    // never fed back into planning itself, just makes "SHOW CALIBRATION"'s
+    // cost-unit -> ms conversion a little more accurate each time. See
+    // adaptive/calibration.hpp.
+    sql::adaptive::record_plan_observations(result.plan, *executor, calibration);
+    try {
+        sql::adaptive::save_calibration(SQL_OPTIMIZER_CALIBRATION_LOG, calibration);
+    } catch (const std::exception& e) {
+        std::cout << "  (warning: could not save calibration: " << e.what() << ")\n";
+    }
 
     auto m = metrics_from_plan(query_id, sql, result);
     m.executed = true;
@@ -236,6 +268,7 @@ int main() {
     uint64_t next_query_id = 1;
 
     auto database = sql::storage::load_database_from_directory(SQL_OPTIMIZER_DATA_DIR, schema_catalog);
+    auto calibration = sql::adaptive::load_calibration(SQL_OPTIMIZER_CALIBRATION_LOG);
 
     std::string cache_addr = "127.0.0.1:6380";
     if (const char* env = std::getenv("SQLOPT_CACHE_ADDR")) cache_addr = env;
@@ -277,6 +310,10 @@ int main() {
             show_cache(cache);
             continue;
         }
+        if (upper == "SHOW CALIBRATION") {
+            show_calibration(calibration);
+            continue;
+        }
         if (upper == "SHOW WORKERS") {
             std::cout << "Not applicable -- this build is single-node only (no distributed execution yet).\n";
             continue;
@@ -296,7 +333,8 @@ int main() {
                 continue;
             }
             try {
-                run_explain_analyze(next_query_id++, sql, schema_catalog, stats_catalog, cache, versions, database);
+                run_explain_analyze(next_query_id++, sql, schema_catalog, stats_catalog, cache, versions, database,
+                                     calibration);
             } catch (const std::exception& e) {
                 std::cout << "Error: " << e.what() << "\n";
             }

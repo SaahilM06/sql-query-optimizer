@@ -2,8 +2,11 @@
 
 #include <cctype>
 #include <cerrno>
+#include <chrono>
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -145,8 +148,34 @@ std::optional<HttpClientResponse> read_response(int fd) {
 
 } // namespace
 
+namespace {
+
+// An artificial per-request delay, for demonstrating how conditions (not
+// just data size) should shift the broadcast-vs-shuffle bandit's learned
+// preference -- shuffle always makes more round trips than broadcast for
+// the same join (gather both sides + redistribute vs. gather one side +
+// replicate), so the gap between them should widen as this grows. Read
+// fresh on every call rather than cached, so a coordinator session can
+// have the knob turned up mid-run for a live before/after comparison. 0 or
+// unset means no simulated delay (the default -- real localhost calls
+// already have their own real, much smaller latency).
+int simulated_latency_ms() {
+    const char* env = std::getenv("SQLOPT_SIMULATED_LATENCY_MS");
+    if (env == nullptr) return 0;
+    try {
+        return std::stoi(env);
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
+} // namespace
+
 std::optional<HttpClientResponse> http_post_json(const std::string& host, int port, const std::string& path,
                                                    const std::string& json_body, int timeout_ms) {
+    int delay_ms = simulated_latency_ms();
+    if (delay_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+
     int fd = connect_with_timeout(host, port, timeout_ms);
     if (fd < 0) return std::nullopt;
 

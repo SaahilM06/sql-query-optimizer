@@ -6,11 +6,13 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "adaptive/bandit.hpp"
 #include "distributed/coordinator.hpp"
 #include "execution/value_ops.hpp"
 #include "integration/cache_client.hpp"
@@ -48,6 +50,22 @@ void print_result_table(const std::vector<std::string>& columns, const std::vect
     }
 }
 
+void show_bandit(const sql::adaptive::BanditModel& bandit) {
+    const auto& snapshot = bandit.snapshot();
+    if (snapshot.empty()) {
+        std::cout << "No bandit data yet -- run a broadcast/shuffle-eligible join a few times first.\n";
+        return;
+    }
+    for (const auto& [context, arms] : snapshot) {
+        std::cout << context << ":\n";
+        for (const auto& [arm, stats] : arms) {
+            std::cout << "  " << arm << ": " << stats.count << " observation(s), avg reward "
+                       << std::fixed << std::setprecision(3) << stats.average_reward << std::defaultfloat
+                       << " (i.e. ~" << -stats.average_reward << " ms)\n";
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -77,10 +95,12 @@ int main(int argc, char** argv) {
     sql::integration::CacheClient cache(cache_host, cache_port);
     bool cache_connected = cache.connect();
 
+    auto bandit = sql::adaptive::load_bandit(SQL_OPTIMIZER_BANDIT_LOG);
+
     std::cout << "Distributed coordinator -- " << workers.size() << " worker(s):\n";
     for (const auto& w : workers) std::cout << "  " << w.host << ":" << w.port << "\n";
     std::cout << "Cache: " << (cache_connected ? ("connected at " + cache_addr) : "unavailable") << "\n";
-    std::cout << "Type SQL, or EXIT/QUIT.\n\n";
+    std::cout << "Type SQL, SHOW BANDIT, or EXIT/QUIT.\n\n";
 
     std::string line;
     while (true) {
@@ -94,19 +114,32 @@ int main(int argc, char** argv) {
         std::string upper = trimmed;
         for (auto& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         if (upper == "EXIT" || upper == "QUIT") break;
+        if (upper == "SHOW BANDIT") {
+            show_bandit(bandit);
+            continue;
+        }
 
         try {
             auto result = sql::distributed::run_distributed_query(trimmed, schema_catalog, stats_catalog,
-                                                                    local_full_database, workers, cache, versions);
+                                                                    local_full_database, workers, cache, versions,
+                                                                    bandit);
             if (result.distributed) {
-                std::cout << "[distributed across " << result.workers_used << " worker(s), " << result.total_ms
-                          << " ms]\n";
+                std::cout << "[distributed";
+                if (!result.join_strategy.empty()) std::cout << ", strategy=" << result.join_strategy;
+                if (result.used_copartition_merge_skip) std::cout << ", co-partition merge skipped";
+                std::cout << ", " << result.workers_used << " worker(s), " << result.total_ms << " ms]\n";
             } else {
                 std::cout << "[fallback to single-node -- " << result.fallback_reason << " (" << result.total_ms
                           << " ms)]\n";
             }
             print_result_table(result.columns, result.rows);
             std::cout << "(" << result.rows.size() << " rows)\n";
+
+            try {
+                sql::adaptive::save_bandit(SQL_OPTIMIZER_BANDIT_LOG, bandit);
+            } catch (const std::exception& e) {
+                std::cout << "(warning: could not save bandit state: " << e.what() << ")\n";
+            }
         } catch (const std::exception& e) {
             std::cout << "Error: " << e.what() << "\n";
         }

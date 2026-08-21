@@ -10,17 +10,31 @@
 // system's static base-table partitioning would.
 //
 // This build handles exactly one exchange point: the query's outermost
-// join, when both sides are a single base relation (broadcast the smaller
-// side below a row-count threshold, else shuffle both sides by the join
-// key), or a top-level GROUP BY with no join at all (distributed partial-
-// aggregate + coordinator-side merge, splitting AVG into SUM+COUNT since
-// per-worker averages can't be correctly averaged back together). A join
-// where either side is itself a multi-relation subtree (a 3+ table query)
-// would need an exchange inserted at more than one point in the tree to
-// stay correct, which needs the optimizer to reason about partitioning
-// per-subtree -- exactly what ROADMAP.md's "physical property tracking"
-// item is for, not yet built. Those fall back to ordinary single-node
-// execution rather than being distributed unsoundly.
+// join, when both sides are a single base relation, or a top-level GROUP
+// BY with no join at all (distributed partial-aggregate + coordinator-side
+// merge, splitting AVG into SUM+COUNT since per-worker averages can't be
+// correctly averaged back together). A join where either side is itself a
+// multi-relation subtree (a 3+ table query) would need an exchange
+// inserted at more than one point in the tree to stay correct, which needs
+// the optimizer to reason about partitioning per-subtree -- fuller
+// "physical property tracking" than this build does, so those fall back to
+// ordinary single-node execution rather than being distributed unsoundly.
+//
+// Physical property tracking, the narrow version this build DOES do (see
+// properties.hpp): a shuffle join's output is known to be co-located by
+// the join key -- every row for a given key value is guaranteed to be on
+// exactly one worker. When a GROUP BY sits directly on top of a shuffle
+// join and groups by that same key, each worker's partial aggregate is
+// therefore already the complete, final answer for every group it
+// produced -- no other worker can hold a row for that group -- so the
+// usual cross-worker merge is skipped entirely (see run_shuffle_join).
+//
+// Broadcast vs. shuffle, when a join qualifies for either (at least one
+// side is small enough to broadcast at all -- see kBroadcastEligible):
+// chosen by an epsilon-greedy bandit rather than a fixed rule, trained on
+// each call's observed total_ms (see adaptive/bandit.hpp) -- both are
+// always individually *correct* for a 2-relation join, so this is a real
+// speed optimization decision, not a correctness one.
 
 #include "coordinator.hpp"
 
@@ -39,6 +53,7 @@
 #include "../util/hash.hpp"
 #include "../util/json.hpp"
 #include "http_client.hpp"
+#include "properties.hpp"
 #include "row_json.hpp"
 
 namespace sql::distributed {
@@ -52,7 +67,12 @@ using sql::util::JsonValue;
 
 namespace {
 
-constexpr size_t kBroadcastThreshold = 5000; // rows -- a simple fixed threshold, not yet part of the cost-based DP search
+// Above this, broadcasting isn't offered as an option at all (a hard
+// feasibility ceiling, not a preference) -- replicating something this
+// large to every worker is a real resource concern regardless of how fast
+// it might be. Below it, broadcast and shuffle are both legal and the
+// bandit picks between them.
+constexpr size_t kBroadcastEligible = 5000; // rows
 
 double ms_since(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -450,7 +470,9 @@ DistributedQueryResult run_broadcast_join(const std::vector<WorkerAddress>& work
         for (auto& wr : per_worker_rows) merged.insert(merged.end(), wr.begin(), wr.end());
     }
 
-    return finish(u, result_columns, std::move(merged), workers.size());
+    auto result = finish(u, result_columns, std::move(merged), workers.size());
+    result.join_strategy = broadcast_left ? "broadcast_left" : "broadcast_right";
+    return result;
 }
 
 // ── Distributed join: shuffle ────────────────────────────────────────────────
@@ -499,11 +521,29 @@ DistributedQueryResult run_shuffle_join(const std::vector<WorkerAddress>& worker
         PhysicalPlan::make_join(join.kind, join.join_type, join.condition, std::move(left_ext), std::move(right_ext),
                                  cost::Cost{}, 0);
 
+    // Physical property tracking: a shuffle join's output is co-located by
+    // the join key -- every row for a given key value lands on exactly one
+    // worker, and no other worker will ever produce a second contribution
+    // to the same key. If the GROUP BY is on that same key, each worker's
+    // own HashAggregateExec already computes the true, final per-group
+    // answer -- there's nothing to recombine across workers, so there's no
+    // reason to ship the AVG-split SUM+COUNT shadow columns at all. Send
+    // the *original* aggregate spec straight to the workers instead.
+    bool group_by_co_located =
+        u.aggregate != nullptr &&
+        (partition_key_is_safe_for_group_by(PartitionKey{keys.left_key.table, keys.left_key.column}, u.aggregate->group_by) ||
+         partition_key_is_safe_for_group_by(PartitionKey{keys.right_key.table, keys.right_key.column}, u.aggregate->group_by));
+
     std::optional<AvgSplit> split;
     if (u.aggregate) {
-        split = split_avg(u.aggregate->aggregates);
-        worker_join = PhysicalPlan::make_hash_aggregate(u.aggregate->group_by, split->worker_aggregates,
-                                                          std::move(worker_join), cost::Cost{}, 0);
+        if (group_by_co_located) {
+            worker_join = PhysicalPlan::make_hash_aggregate(u.aggregate->group_by, u.aggregate->aggregates,
+                                                              std::move(worker_join), cost::Cost{}, 0);
+        } else {
+            split = split_avg(u.aggregate->aggregates);
+            worker_join = PhysicalPlan::make_hash_aggregate(u.aggregate->group_by, split->worker_aggregates,
+                                                              std::move(worker_join), cost::Cost{}, 0);
+        }
     }
 
     std::vector<std::vector<Row>> per_worker_rows;
@@ -521,14 +561,20 @@ DistributedQueryResult run_shuffle_join(const std::vector<WorkerAddress>& worker
     }
 
     std::vector<Row> merged;
-    if (u.aggregate) {
+    if (u.aggregate && group_by_co_located) {
+        // Each worker's rows are already final per-group answers -- concatenate.
+        for (auto& wr : per_worker_rows) merged.insert(merged.end(), wr.begin(), wr.end());
+    } else if (u.aggregate) {
         merged = merge_partial_aggregates(per_worker_rows, u.aggregate->group_by.size(), u.aggregate->aggregates, *split);
         result_columns = aggregate_output_columns(*u.aggregate); // post-merge shape, not the worker's split-AVG shape
     } else {
         for (auto& wr : per_worker_rows) merged.insert(merged.end(), wr.begin(), wr.end());
     }
 
-    return finish(u, result_columns, std::move(merged), n);
+    auto result = finish(u, result_columns, std::move(merged), n);
+    result.join_strategy = "shuffle";
+    result.used_copartition_merge_skip = group_by_co_located;
+    return result;
 }
 
 } // namespace
@@ -538,7 +584,8 @@ DistributedQueryResult run_distributed_query(const std::string& sql, const sql::
                                               const sql::storage::Database& local_full_database,
                                               const std::vector<WorkerAddress>& workers,
                                               sql::integration::CacheClient& cache,
-                                              sql::integration::CacheVersions versions) {
+                                              sql::integration::CacheVersions versions,
+                                              sql::adaptive::BanditModel& bandit) {
     if (workers.empty()) throw std::runtime_error("distributed: no workers configured");
 
     auto start = std::chrono::steady_clock::now();
@@ -547,6 +594,9 @@ DistributedQueryResult run_distributed_query(const std::string& sql, const sql::
     UnwrapResult u = unwrap(planned.plan);
 
     DistributedQueryResult result;
+    std::string bandit_context; // set only when this query actually went through the join decision below
+    std::string bandit_arm;
+
     if (is_join(*u.core)) {
         if (!is_single_relation(*u.core->left) || !is_single_relation(*u.core->right)) {
             result = run_fallback(planned.plan, local_full_database,
@@ -556,17 +606,26 @@ DistributedQueryResult run_distributed_query(const std::string& sql, const sql::
         } else {
             size_t left_est = u.core->left->estimated_rows;
             size_t right_est = u.core->right->estimated_rows;
-            bool can_broadcast_left = left_est <= kBroadcastThreshold;
-            bool can_broadcast_right = right_est <= kBroadcastThreshold;
+            bool can_broadcast_left = left_est <= kBroadcastEligible;
+            bool can_broadcast_right = right_est <= kBroadcastEligible;
+            bandit_context = unwrap_filter(*u.core->left).table_name + ":" + unwrap_filter(*u.core->right).table_name;
+
             if (can_broadcast_left || can_broadcast_right) {
-                bool broadcast_left = can_broadcast_left && (!can_broadcast_right || left_est <= right_est);
-                result = run_broadcast_join(workers, *u.core, broadcast_left, u);
+                bool prefer_broadcast_left = can_broadcast_left && (!can_broadcast_right || left_est <= right_est);
+                bandit_arm = bandit.choose(bandit_context, {"broadcast", "shuffle"});
+                if (bandit_arm == "broadcast") {
+                    result = run_broadcast_join(workers, *u.core, prefer_broadcast_left, u);
+                } else {
+                    result = run_shuffle_join(workers, *u.core, u, schema_catalog);
+                }
             } else {
+                bandit_arm = "shuffle"; // the only legal option here -- still recorded, just never competes against broadcast for this context
                 result = run_shuffle_join(workers, *u.core, u, schema_catalog);
             }
         }
     } else if (is_single_relation(*u.core)) {
         result = run_distributed_single(workers, u);
+        result.join_strategy = "single";
     } else {
         result = run_fallback(planned.plan, local_full_database,
                                "plan's core isn't a single base relation or a 2-relation join -- not eligible for "
@@ -574,6 +633,11 @@ DistributedQueryResult run_distributed_query(const std::string& sql, const sql::
     }
 
     result.total_ms = ms_since(start);
+
+    if (!bandit_context.empty() && !bandit_arm.empty()) {
+        bandit.update(bandit_context, bandit_arm, -result.total_ms);
+    }
+
     return result;
 }
 

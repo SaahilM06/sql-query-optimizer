@@ -56,6 +56,8 @@ add_library(sql_optimizer_lib STATIC
   distributed/http_client.cpp
   distributed/worker_service.cpp
   distributed/coordinator.cpp
+  adaptive/calibration.cpp
+  adaptive/bandit.cpp
 )
 
 target_link_libraries(sql_optimizer_lib PUBLIC Threads::Threads)
@@ -65,6 +67,8 @@ target_compile_definitions(sql_optimizer_lib PUBLIC
   SQL_OPTIMIZER_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
   SQL_OPTIMIZER_METRICS_LOG="${CMAKE_CURRENT_SOURCE_DIR}/metrics/query_log.jsonl"
   SQL_OPTIMIZER_WEB_FRONTEND_DIR="${CMAKE_CURRENT_SOURCE_DIR}/web/frontend"
+  SQL_OPTIMIZER_CALIBRATION_LOG="${CMAKE_CURRENT_SOURCE_DIR}/adaptive/calibration.json"
+  SQL_OPTIMIZER_BANDIT_LOG="${CMAKE_CURRENT_SOURCE_DIR}/adaptive/bandit.json"
 )
 
 # Repo root, so every component's own internal includes (e.g.

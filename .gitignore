@@ -3,3 +3,5 @@ build/
 .cache/
 cache/cache
 metrics/query_log.jsonl
+adaptive/calibration.json
+adaptive/bandit.json
