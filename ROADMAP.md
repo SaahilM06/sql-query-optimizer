@@ -87,13 +87,18 @@ Status legend: ✅ done · ⬅️ in progress/next · ⬜ not started
   and executor trees in lockstep, prints estimated vs. actual rows/time at
   every node; cumulative per-node timing falls out of the executor's
   open()/next() wrappers for free, no manual bookkeeping)
-- ⬅️ **Real statistics generation** — an `ANALYZE` command that scans the
-  data/ tables now that they exist, instead of relying only on hand-authored
-  JSON fixtures
-- ⬜ Metrics infrastructure — per-query planning/execution telemetry, a query ID,
-  candidate-plan counts
-- ⬜ Visual plan explorer — HTTP API + web frontend rendering the plan tree,
-  estimated vs. actual, rejected alternative plans and their costs
+- ✅ Real statistics generation (`statistics/analyzer.cpp` — `ANALYZE` in the
+  CLI scans `data/` into a real StatisticsCatalog: NDV, null fraction,
+  min/max, a 10-bucket equi-width histogram; folds a fresh epoch into the
+  cache key's stats_version so post-ANALYZE plans don't collide with plans
+  cached under the old JSON-fixture statistics)
+- ✅ Metrics infrastructure (`metrics/` — per-query ID, parse/cache-lookup/
+  plan/cache-store/execution timings, estimated-vs-actual rows, logged to
+  `metrics/query_log.jsonl` and printed after every CLI query; candidate-plan
+  counts and distributed-stage timings deferred until join search exposes a
+  counter and a worker cluster exists, respectively)
+- ⬅️ **Visual plan explorer** — HTTP API + web frontend rendering the plan
+  tree, estimated vs. actual, rejected alternative plans and their costs
 - ⬜ Distributed coordinator/workers — multiple worker processes, partitioned
   tables (`hash(key) % N`)
 - ⬜ Exchange operators — Broadcast and Shuffle
