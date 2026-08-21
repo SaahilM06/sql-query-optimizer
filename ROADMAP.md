@@ -97,9 +97,13 @@ Status legend: ✅ done · ⬅️ in progress/next · ⬜ not started
   `metrics/query_log.jsonl` and printed after every CLI query; candidate-plan
   counts and distributed-stage timings deferred until join search exposes a
   counter and a worker cluster exists, respectively)
-- ⬅️ **Visual plan explorer** — HTTP API + web frontend rendering the plan
-  tree, estimated vs. actual, rejected alternative plans and their costs
-- ⬜ Distributed coordinator/workers — multiple worker processes, partitioned
+- ✅ Visual plan explorer, minimal version (`web/` — hand-rolled HTTP/1.1
+  server, `GET /api/schema` + `POST /api/query`, `web/frontend/index.html`
+  vanilla-JS tree renderer with estimated-vs-actual divergence highlighting;
+  verified in a real browser). Not yet done: rejected-alternative-plans
+  view (needs the join enumerator to expose candidates it didn't pick, not
+  just the winner), live updates, dedicated frontend tooling
+- ⬅️ **Distributed coordinator/workers** — multiple worker processes, partitioned
   tables (`hash(key) % N`)
 - ⬜ Exchange operators — Broadcast and Shuffle
 - ⬜ Broadcast/Shuffle/Local hash join variants, cost-compared by the optimizer
