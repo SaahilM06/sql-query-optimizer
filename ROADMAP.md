@@ -120,17 +120,24 @@ Status legend: ✅ done · ⬅️ in progress/next · ⬜ not started
 - ✅ Distributed aggregation (partial per-worker aggregate → coordinator
   merge; AVG split into SUM+COUNT before shipping to workers since
   per-worker averages can't be correctly re-averaged)
-- ⬅️ **Physical property tracking** — partitioning/ordering, so the optimizer
-  can skip a shuffle when both sides are already co-partitioned, and so
-  distribution isn't limited to "outermost join, both sides a single
-  relation" the way this build's coordinator currently is (a 3+ table join
-  falls back to single-node execution today, logged with a clear reason —
-  see distributed/coordinator.cpp's top comment)
-- ⬜ Adaptive runtime model — online regression correcting cost-model
-  coefficients from actual execution telemetry
-- ⬜ Bandit-based plan selection — contextual bandit (epsilon-greedy → UCB →
-  LinUCB) choosing among cost-tied physical alternatives (e.g.
-  broadcast vs. shuffle) under live conditions
+- ✅ Physical property tracking, narrow version (`distributed/properties.hpp`
+  — tracks one property, shuffle-join co-location by the join key, for one
+  consumer: skipping the AVG-split-and-recombine dance and the
+  cross-worker merge when a GROUP BY matches the shuffle key, since each
+  worker's partial aggregate is then already final. Not yet done: the
+  fuller version that would let a 3+ table join distribute at more than
+  one exchange point — that still falls back to single-node, logged with a
+  clear reason, same as before)
+- ✅ Adaptive runtime model (`adaptive/calibration.hpp` — online least-squares
+  regression learning a per-operator-kind cost-unit → ms correction from
+  real EXPLAIN ANALYZE runs; `SHOW CALIBRATION` in the CLI. Deliberately
+  never feeds back into the join-order/algorithm search itself — an
+  additive, inspectable layer, not a change to planning)
+- ✅ Bandit-based plan selection (`adaptive/bandit.hpp` — epsilon-greedy,
+  contextualized by which relations a join involves, per ROADMAP's own
+  "epsilon-greedy first" — replaces the fixed broadcast-vs-shuffle rule;
+  `SHOW BANDIT` in the coordinator. UCB/Thompson/LinUCB not built — this is
+  deliberately the simplest version, not the strongest one)
 - ⬜ Fault injection/recovery — detect a dead worker mid-stage, retry its
   partition elsewhere
 - ⬜ Full benchmarking study — TPC-H-inspired dataset, query categories, naive
