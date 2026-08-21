@@ -43,6 +43,16 @@ public:
     size_t size() const { return entries_.size(); }
     const std::string& column_name(size_t index) const { return entries_[index].column; }
 
+    // "table.column" if this entry has a table qualifier, else just
+    // "column" -- the wire format distributed/coordinator.cpp round-trips
+    // column identity through (see ExternalRows in executor_builder.cpp),
+    // since a worker-injected row set needs to preserve exactly which
+    // qualifier (if any) each column resolves under, not just its name.
+    std::string qualified_name(size_t index) const {
+        const Entry& e = entries_[index];
+        return e.table.has_value() ? *e.table + "." + e.column : e.column;
+    }
+
 private:
     struct Entry {
         std::optional<std::string> table;

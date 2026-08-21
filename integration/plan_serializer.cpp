@@ -143,6 +143,7 @@ std::string plan_kind_to_string(PhysicalPlan::Kind k) {
         case PhysicalPlan::Kind::Project: return "Project";
         case PhysicalPlan::Kind::Sort: return "Sort";
         case PhysicalPlan::Kind::Limit: return "Limit";
+        case PhysicalPlan::Kind::ExternalRows: return "ExternalRows";
     }
     throw std::runtime_error("plan_serializer: unknown PhysicalPlan::Kind");
 }
@@ -158,6 +159,7 @@ PhysicalPlan::Kind plan_kind_from_string(const std::string& s) {
     if (s == "Project") return PhysicalPlan::Kind::Project;
     if (s == "Sort") return PhysicalPlan::Kind::Sort;
     if (s == "Limit") return PhysicalPlan::Kind::Limit;
+    if (s == "ExternalRows") return PhysicalPlan::Kind::ExternalRows;
     throw std::runtime_error("plan_serializer: unknown PhysicalPlan::Kind '" + s + "'");
 }
 

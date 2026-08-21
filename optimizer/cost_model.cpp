@@ -53,6 +53,14 @@ cost::Cost CostModel::estimate_cost(const PhysicalPlan& plan) const {
 
         case PhysicalPlan::Kind::Limit:
             return estimate_cost(*plan.input) + cost::limit(plan.input->estimated_rows);
+
+        case PhysicalPlan::Kind::ExternalRows:
+            // Never appears in a plan join_enumerator/PhysicalPlanner
+            // produce -- distributed::Coordinator synthesizes it after
+            // planning is already done, so CostModel never needs to cost
+            // it during normal search. A worker-injected row set has no
+            // scan cost of its own.
+            return cost::Cost{};
     }
     throw std::logic_error("unreachable: unknown PhysicalPlan::Kind");
 }

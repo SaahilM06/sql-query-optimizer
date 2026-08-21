@@ -20,6 +20,7 @@ const char* kind_name(PhysicalPlan::Kind k) {
         case PhysicalPlan::Kind::Project: return "Project";
         case PhysicalPlan::Kind::Sort: return "Sort";
         case PhysicalPlan::Kind::Limit: return "Limit";
+        case PhysicalPlan::Kind::ExternalRows: return "ExternalRows";
     }
     return "?";
 }
@@ -32,7 +33,8 @@ void explain_plan(const PhysicalPlan& plan, std::ostream& os, int depth) {
     std::string pad = indent(depth);
 
     os << pad << kind_name(plan.kind);
-    if (plan.kind == PhysicalPlan::Kind::SeqScan || plan.kind == PhysicalPlan::Kind::IndexScan) {
+    if (plan.kind == PhysicalPlan::Kind::SeqScan || plan.kind == PhysicalPlan::Kind::IndexScan ||
+        plan.kind == PhysicalPlan::Kind::ExternalRows) {
         os << "(" << plan.table_name << ")";
     }
     os << "\n";

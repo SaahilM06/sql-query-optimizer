@@ -79,6 +79,7 @@ void collect_leaf_tables(const PhysicalPlan& node, std::vector<std::string>& out
     switch (node.kind) {
         case PhysicalPlan::Kind::SeqScan:
         case PhysicalPlan::Kind::IndexScan:
+        case PhysicalPlan::Kind::ExternalRows:
             out.push_back(node.table_name);
             break;
         case PhysicalPlan::Kind::Filter:

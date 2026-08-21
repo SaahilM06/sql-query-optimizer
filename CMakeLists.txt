@@ -51,6 +51,11 @@ add_library(sql_optimizer_lib STATIC
   web/http_server.cpp
   web/plan_json.cpp
   web/api_handlers.cpp
+  distributed/partition.cpp
+  distributed/row_json.cpp
+  distributed/http_client.cpp
+  distributed/worker_service.cpp
+  distributed/coordinator.cpp
 )
 
 target_link_libraries(sql_optimizer_lib PUBLIC Threads::Threads)
@@ -85,6 +90,14 @@ target_link_libraries(sql_optimizer_cli PRIVATE sql_optimizer_lib)
 
 add_executable(sql_optimizer_web cmd/web/main.cpp)
 target_link_libraries(sql_optimizer_web PRIVATE sql_optimizer_lib)
+
+# ── Distributed worker + coordinator ────────────────────────────────────────
+
+add_executable(sql_optimizer_worker cmd/worker/main.cpp)
+target_link_libraries(sql_optimizer_worker PRIVATE sql_optimizer_lib)
+
+add_executable(sql_optimizer_coordinator cmd/coordinator/main.cpp)
+target_link_libraries(sql_optimizer_coordinator PRIVATE sql_optimizer_lib)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 

@@ -68,6 +68,7 @@ bool costs_monotonic(const PhysicalPlan& node) {
                    costs_monotonic(*node.right);
         case PhysicalPlan::Kind::SeqScan:
         case PhysicalPlan::Kind::IndexScan:
+        case PhysicalPlan::Kind::ExternalRows:
             return true;
     }
     return false;

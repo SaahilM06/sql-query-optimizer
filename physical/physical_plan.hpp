@@ -49,6 +49,19 @@ public:
         Project,
         Sort,
         Limit,
+        // A leaf that never comes out of normal planning (join_enumerator/
+        // PhysicalPlanner never produce it) -- distributed::Coordinator
+        // synthesizes it after the fact, replacing a subtree it has already
+        // computed elsewhere (broadcast or shuffle), to ship a worker a
+        // plan that reads that data from an injected row set instead of
+        // scanning a table. Reuses table_name (informational, e.g.
+        // "broadcast:products") and count (the slot id build_executor's
+        // external_rows map is keyed by). projected_columns holds each
+        // column's identity as "table.column" or a bare "column" (see
+        // RowSchema::qualified_name) rather than one uniform alias, since a
+        // HashAggregate's output can mix qualified GROUP BY columns with
+        // unqualified aggregate result columns.
+        ExternalRows,
     };
 
     Kind kind = Kind::SeqScan;
@@ -239,6 +252,19 @@ public:
         p.estimated_rows = rows;
         p.cardinality_reasoning = std::move(reasoning);
         p.cardinality_confidence = confidence;
+        return p;
+    }
+
+    // `projected_columns` entries are each "table.column" or a bare
+    // "column" -- see the ExternalRows Kind comment above.
+    static PhysicalPlan make_external_rows(std::string table_name, std::vector<std::string> projected_columns,
+                                            size_t slot_id, size_t rows) {
+        PhysicalPlan p;
+        p.kind = Kind::ExternalRows;
+        p.table_name = std::move(table_name);
+        p.projected_columns = std::move(projected_columns);
+        p.count = slot_id;
+        p.estimated_rows = rows;
         return p;
     }
 };

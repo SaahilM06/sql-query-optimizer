@@ -21,6 +21,7 @@ const char* kind_name(sql::physical::PhysicalPlan::Kind k) {
         case Kind::Project: return "Project";
         case Kind::Sort: return "Sort";
         case Kind::Limit: return "Limit";
+        case Kind::ExternalRows: return "ExternalRows";
     }
     return "?";
 }

@@ -221,4 +221,32 @@ private:
     size_t emitted_ = 0;
 };
 
+// A leaf that serves a pre-supplied row set instead of scanning a table --
+// how a distributed worker receives a broadcast or shuffled input (see
+// PhysicalPlan::Kind::ExternalRows, distributed/coordinator.cpp). Rows are
+// copied in at construction; this executor owns nothing beyond that.
+class ExternalRowsExec : public Executor {
+public:
+    ExternalRowsExec(std::string table_name, RowSchema schema, std::vector<sql::storage::Row> rows)
+        : table_name_(std::move(table_name)), schema_(std::move(schema)), rows_(std::move(rows)) {}
+
+    const RowSchema& schema() const override { return schema_; }
+    std::string operator_name() const override { return "ExternalRows(" + table_name_ + ")"; }
+    std::vector<Executor*> children() const override { return {}; }
+
+protected:
+    void open_impl() override { pos_ = 0; }
+    std::optional<sql::storage::Row> next_impl() override {
+        if (pos_ >= rows_.size()) return std::nullopt;
+        return rows_[pos_++];
+    }
+    void close_impl() override {}
+
+private:
+    std::string table_name_;
+    RowSchema schema_;
+    std::vector<sql::storage::Row> rows_;
+    size_t pos_ = 0;
+};
+
 } // namespace sql::execution
